@@ -4,7 +4,7 @@ import torch.nn as nn
 import os, pickle
 from time import time
 from tqdm import tqdm
-from model import LatticeMLP
+from model import LatticeMLP, FAN
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -46,7 +46,7 @@ class ModelTrainer:
         self.exp_name = args.exp_name
         self.device = args.device
         self.len_data = args.num_train
-        self.model = LatticeMLP(args).to(self.device)
+        self.model = FAN(args).to(self.device)
         self.cosine = nn.CosineSimilarity()
         self.mse = nn.MSELoss()
         self.optimizer = optim.AdamW(params=self.model.parameters(),
