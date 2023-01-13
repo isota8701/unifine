@@ -1,0 +1,15 @@
+
+
+
+
+
+2023.01.11
+1) re defined latent z and latent n_z for predicting coordinates
+2) should i add kld loss for n_mu, n_log_var?
+3) should the mlp predicting mu, log_var, n_mu, n_log_var parameter shared or not?
+4) lattice loss is too large, should i split dense graph and spread graph each?
+5) to decide 4) i should check the validity of predicted lattice for my first milestone
+6) for 5) the cdvae eval_utils file might help
+7) check the coord loss fn working well
+8) to wrap up, if 1to7 works, i should clean up the dataset.py and model.py for purpose
+9) reporting at AOI should be done at level 5)
