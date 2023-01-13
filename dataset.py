@@ -133,7 +133,7 @@ def add_scaled_lattice_prop(data_list, lattice_scale_method):
 
         dict['scaled_lattice'] = np.concatenate([lengths, angles])
 # spread formula#############################
-def formula_to_graph(string):
+def formula_to_spread_graph(string):
     elem, weight = parse_roost(string)
     alist = []
     for i, w in enumerate(weight):
@@ -188,7 +188,7 @@ def formula_to_dense_graph(string):
 def process_one(mp_ids, crystal_array, crystal_string):
     crystal = build_crystal(crystal_array)
     graph_arrays = build_crystal_graph(crystal, 'crystalnn')
-    formula_arrays = formula_to_dense_graph(crystal_string)
+    formula_arrays = formula_to_spread_graph(crystal_string)
     result_dict = {
         'mp_ids': mp_ids,
         'graph_arrays': graph_arrays,
