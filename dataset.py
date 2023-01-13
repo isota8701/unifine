@@ -135,29 +135,32 @@ def add_scaled_lattice_prop(data_list, lattice_scale_method):
 # spread formula#############################
 def formula_to_spread_graph(string):
     elem, weight = parse_roost(string)
-    alist = []
+    alist, wlist = [], []
     for i, w in enumerate(weight):
         for _ in range(int(w)):
             alist.append(elem[i])
-    x = torch.zeros([len(alist),3])
+            wlist.append(weight[i])
+    elem_w =[v/sum(wlist) for v in wlist]
     # build up atom attribute tensor
     self_idx = []
     nbr_idx = []
     atom_types = []
+    w_attr = []
     for i, _ in enumerate(alist):
         self_idx += [i] * len(alist)
         nbr_idx += list(range(len(alist)))
+        w_attr+= [elem_w[v] for v in range(len(alist))]
         atom_types.append(Specie(alist[i]).Z)
     edge_idx = np.concatenate((self_idx, nbr_idx)).reshape(2,-1)
+    w_attr = np.array(w_attr).reshape(-1, 1)
     node_features = []
     for s in alist:
         feat = list(get_node_attributes(s, atom_features='cgcnn'))
         node_features.append(feat)
     node_features = np.array(node_features)
     # elem_weights = np.atleast_2d(weight) / np.sum(weight)
-    elem_weights = np.ones(len(alist)).reshape(-1,1)
     atom_types = np.array(atom_types)
-    return atom_types, node_features, edge_idx, elem_weights
+    return atom_types, node_features, edge_idx, w_attr
 
 def formula_to_dense_graph(string):
     elem, weight = parse_roost(string)
@@ -181,18 +184,19 @@ def formula_to_dense_graph(string):
         node_features.append(feat)
     node_features = np.array(node_features)
     elem_weights = np.atleast_2d(weight) / np.sum(weight)
-    # elem_weights = np.ones(len(elem)).reshape(-1,1)
     atom_types = np.array(atom_types)
     return atom_types, node_features, edge_idx, elem_weights
 
-def process_one(mp_ids, crystal_array, crystal_string):
+def process_one(mp_ids, crystal_array, crystal_string, labels):
     crystal = build_crystal(crystal_array)
     graph_arrays = build_crystal_graph(crystal, 'crystalnn')
-    formula_arrays = formula_to_spread_graph(crystal_string)
+    formula_arrays = formula_to_dense_graph(crystal_string)
+    label_arrays = np.array(labels)
     result_dict = {
         'mp_ids': mp_ids,
         'graph_arrays': graph_arrays,
-        'formula_arrays':formula_arrays
+        'formula_arrays':formula_arrays,
+        'label_arrays': label_arrays
     }
     return result_dict
 
@@ -246,7 +250,7 @@ class LoadDataset(torch.utils.data.Dataset):
         datasplit = np.array_split(df, num_workers)
 
         def progress(df):
-            return [process_one(mp_ids, crystal_array, crystal_string) for (mp_ids, crystal_array, crystal_string) in zip(df['id'], tqdm(df['atoms']), df['full_formula'])]
+            return [process_one(mp_ids, crystal_array, crystal_string, labels) for (mp_ids, crystal_array, crystal_string,labels) in zip(df['id'], tqdm(df['atoms']), df['full_formula'], df['formation_energy_per_atom'])]
 
         cached_data = Parallel(n_jobs=num_workers)(delayed(progress)(split) for split in datasplit)
 
@@ -269,6 +273,7 @@ class LoadDataset(torch.utils.data.Dataset):
          to_jimages, num_atoms) = data_dict['graph_arrays']
         (f_atom_types, f_node_features,
          f_edge_indices, f_elem_weights) = data_dict['formula_arrays']
+        y = data_dict['label_arrays']
         data = Data(
             node_features = torch.Tensor(f_node_features),
             atom_types=torch.LongTensor(f_atom_types),
@@ -278,6 +283,7 @@ class LoadDataset(torch.utils.data.Dataset):
             num_bonds=f_edge_indices.shape[-1],
             atom_weights = torch.Tensor(f_elem_weights).reshape(-1,1),
             num_nodes=f_atom_types.shape[0],
+            y = torch.Tensor(y),
         )
     #     data = Data(
     #         frac_coords=torch.Tensor(frac_coords),

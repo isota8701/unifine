@@ -318,7 +318,7 @@ if __name__ == "__main__":
     parser.add_argument('--num-valid', type=int, default=25, help="")
     parser.add_argument('--num-test', type=int, default=25, help="")
     parser.add_argument('--batch-size', type=int, default=20, help="")
-    parser.add_argument('--data-path', type=str, default="./data/")
+    parser.add_argument('--data-path', type=str, default=None)
     parser.add_argument('--alpha', type = float, default = 1.)
     parser.add_argument('--beta', type = float, default=10.)
     parser.add_argument('--gamma', type = float, default=1.)

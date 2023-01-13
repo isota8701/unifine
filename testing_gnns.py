@@ -4,6 +4,8 @@ import torch
 from torch.nn import Linear, Parameter
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops, degree
+import torch.nn as nn
+from torch_geometric.nn import global_add_pool
 
 class GCNConv(MessagePassing):
     def __init__(self, in_channels, out_channels):
@@ -347,7 +349,7 @@ class GATConv(MessagePassing):
         self,
         in_channels: Union[int, Tuple[int, int]],
         out_channels: int,
-        heads: int = 1,
+        heads: int = 4,
         concat: bool = True,
         negative_slope: float = 0.2,
         dropout: float = 0.0,
@@ -530,35 +532,296 @@ class GATConv(MessagePassing):
         return (f'{self.__class__.__name__}({self.in_channels}, '
                 f'{self.out_channels}, heads={self.heads})')
 
+from typing import Callable, Optional, Union
+
+import torch
+from torch import Tensor
+
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.typing import Adj, OptTensor, PairOptTensor, PairTensor
 
 
+try:
+    from torch_cluster import knn
+except ImportError:
+    knn = None
+
+
+class EdgeConv(MessagePassing):
+    r"""The edge convolutional operator from the `"Dynamic Graph CNN for
+    Learning on Point Clouds" <https://arxiv.org/abs/1801.07829>`_ paper
+
+    .. math::
+        \mathbf{x}^{\prime}_i = \sum_{j \in \mathcal{N}(i)}
+        h_{\mathbf{\Theta}}(\mathbf{x}_i \, \Vert \,
+        \mathbf{x}_j - \mathbf{x}_i),
+
+    where :math:`h_{\mathbf{\Theta}}` denotes a neural network, *.i.e.* a MLP.
+
+    Args:
+        nn (torch.nn.Module): A neural network :math:`h_{\mathbf{\Theta}}` that
+            maps pair-wise concatenated node features :obj:`x` of shape
+            :obj:`[-1, 2 * in_channels]` to shape :obj:`[-1, out_channels]`,
+            *e.g.*, defined by :class:`torch.nn.Sequential`.
+        aggr (string, optional): The aggregation scheme to use
+            (:obj:`"add"`, :obj:`"mean"`, :obj:`"max"`).
+            (default: :obj:`"max"`)
+        **kwargs (optional): Additional arguments of
+            :class:`torch_geometric.nn.conv.MessagePassing`.
+
+    Shapes:
+        - **input:**
+          node features :math:`(|\mathcal{V}|, F_{in})` or
+          :math:`((|\mathcal{V}|, F_{in}), (|\mathcal{V}|, F_{in}))`
+          if bipartite,
+          edge indices :math:`(2, |\mathcal{E}|)`
+        - **output:** node features :math:`(|\mathcal{V}|, F_{out})` or
+          :math:`(|\mathcal{V}_t|, F_{out})` if bipartite
+    """
+    def __init__(self, nn: Callable, aggr: str = 'max', **kwargs):
+        super().__init__(aggr=aggr, **kwargs)
+        self.nn = nn
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.nn.reset_parameters()
+
+    def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj) -> Tensor:
+        """"""
+        if isinstance(x, Tensor):
+            x: PairTensor = (x, x)
+        # propagate_type: (x: PairTensor)
+        return self.propagate(edge_index, x=x, size=None)
+
+
+    def message(self, x_i: Tensor, x_j: Tensor) -> Tensor:
+        return self.nn(torch.cat([x_i, x_j - x_i], dim=-1))
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(nn={self.nn})'
+
+
+
+class DynamicEdgeConv(MessagePassing):
+    r"""The dynamic edge convolutional operator from the `"Dynamic Graph CNN
+    for Learning on Point Clouds" <https://arxiv.org/abs/1801.07829>`_ paper
+    (see :class:`torch_geometric.nn.conv.EdgeConv`), where the graph is
+    dynamically constructed using nearest neighbors in the feature space.
+
+    Args:
+        nn (torch.nn.Module): A neural network :math:`h_{\mathbf{\Theta}}` that
+            maps pair-wise concatenated node features :obj:`x` of shape
+            `:obj:`[-1, 2 * in_channels]` to shape :obj:`[-1, out_channels]`,
+            *e.g.* defined by :class:`torch.nn.Sequential`.
+        k (int): Number of nearest neighbors.
+        aggr (string): The aggregation operator to use (:obj:`"add"`,
+            :obj:`"mean"`, :obj:`"max"`). (default: :obj:`"max"`)
+        num_workers (int): Number of workers to use for k-NN computation.
+            Has no effect in case :obj:`batch` is not :obj:`None`, or the input
+            lies on the GPU. (default: :obj:`1`)
+        **kwargs (optional): Additional arguments of
+            :class:`torch_geometric.nn.conv.MessagePassing`.
+
+    Shapes:
+        - **input:**
+          node features :math:`(|\mathcal{V}|, F_{in})` or
+          :math:`((|\mathcal{V}|, F_{in}), (|\mathcal{V}|, F_{in}))`
+          if bipartite,
+          batch vector :math:`(|\mathcal{V}|)` or
+          :math:`((|\mathcal{V}|), (|\mathcal{V}|))`
+          if bipartite *(optional)*
+        - **output:** node features :math:`(|\mathcal{V}|, F_{out})` or
+          :math:`(|\mathcal{V}_t|, F_{out})` if bipartite
+    """
+    def __init__(self, nn: Callable, k: int, aggr: str = 'max',
+                 num_workers: int = 1, **kwargs):
+        super().__init__(aggr=aggr, flow='source_to_target', **kwargs)
+
+        if knn is None:
+            raise ImportError('`DynamicEdgeConv` requires `torch-cluster`.')
+
+        self.nn = nn
+        self.k = k
+        self.num_workers = num_workers
+        self.nn.reset_parameters()
+    def reset_parameters(self):
+        self.nn.reset_paramerters()
+
+
+    def forward(
+            self, x: Union[Tensor, PairTensor],
+            batch: Union[OptTensor, Optional[PairTensor]] = None) -> Tensor:
+        # type: (Tensor, OptTensor) -> Tensor  # noqa
+        # type: (PairTensor, Optional[PairTensor]) -> Tensor  # noqa
+        """"""
+        if isinstance(x, Tensor):
+            x: PairTensor = (x, x)
+
+        if x[0].dim() != 2:
+            raise ValueError("Static graphs not supported in DynamicEdgeConv")
+
+        b: PairOptTensor = (None, None)
+        if isinstance(batch, Tensor):
+            b = (batch, batch)
+        elif isinstance(batch, tuple):
+            assert batch is not None
+            b = (batch[0], batch[1])
+
+        edge_index = knn(x[0], x[1], self.k, b[0], b[1]).flip([0])
+
+        # propagate_type: (x: PairTensor)
+        return self.propagate(edge_index, x=x, size=None)
+
+
+    def message(self, x_i: Tensor, x_j: Tensor) -> Tensor:
+        return self.nn(torch.cat([x_i, x_j - x_i], dim=-1))
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(nn={self.nn}, k={self.k})'
+
+
+class RConv(MessagePassing):
+    def __init__(self, residual: bool = True):
+        super().__init__(node_dim=0)
+        self.residual = residual
+        self.heads = 4
+        self.lin_src = nn.Linear(256, self.heads * 256, bias=False)
+        self.lin_dst = self.lin_src
+        self.lin_src.reset_parameters()
+        self.lin_dst.reset_parameters()
+        self.edge_dim =128
+        self.add_self_loops = True
+        self.fill_value = 'mean'
+
+        self.att_src = nn.Parameter(torch.Tensor(1, self.heads, 256))
+        self.att_dst = nn.Parameter(torch.Tensor(1, self.heads, 256))
+        torch.nn.init.xavier_uniform_(self.att_src)
+        torch.nn.init.xavier_uniform_(self.att_dst)
+        self.bias = nn.Parameter(torch.Tensor(self.heads * 256))
+        torch.nn.init.zeros_(self.bias)
+
+        self.bn_nodes = nn.BatchNorm1d(self.heads * 256)
+        self.lin_out = nn.Linear(self.heads * 256, 256, bias=False)
+
+    def forward(self, x_in, edge_index, atom_w):
+        H, C = self.heads, 256
+        x_src = x_dst = self.lin_src(x_in).view(-1, H, C)
+        x = (x_src, x_dst)
+        weight = (atom_w, atom_w)
+        alpha_src = (x_src * self.att_src).sum(dim=-1)
+        alpha_dst = (x_dst * self.att_dst).sum(dim=-1)
+        alpha = (alpha_src, alpha_dst)
+        if self.add_self_loops:
+            if isinstance(edge_index, Tensor):
+                # We only want to add self-loops for nodes that appear both as
+                # source and target nodes:
+                num_nodes = x_src.size(0)
+                if x_dst is not None:
+                    num_nodes = min(num_nodes, x_dst.size(0))
+                edge_index, edge_attr = remove_self_loops(
+                    edge_index, edge_attr = None)
+                edge_index, edge_attr = add_self_loops(
+                    edge_index, edge_attr, fill_value=self.fill_value,
+                    num_nodes=num_nodes)
+            elif isinstance(edge_index, SparseTensor):
+                if self.edge_dim is None:
+                    edge_index = set_diag(edge_index)
+                else:
+                    raise NotImplementedError(
+                        "The usage of 'edge_attr' and 'add_self_loops' "
+                        "simultaneously is currently not yet supported for "
+                        "'edge_index' in a 'SparseTensor' form")
+        alpha = self.edge_updater(edge_index, alpha=alpha, weight=weight)
+        out = self.propagate(edge_index, x=x, alpha=alpha)
+        out = out.view(-1, self.heads * args.hidden_features)
+        out += self.bias
+        out = self.bn_nodes(out)
+        out = self.lin_out(out)
+        if self.residual:
+            out = out + x_in
+        return out
+
+    def edge_update(self, alpha_j, alpha_i, weight_j, index, ptr, size_i):
+        alpha = alpha_j + alpha_i
+        alpha = F.leaky_relu(alpha)
+        alpha *= weight_j
+        alpha = softmax(alpha, index, ptr, size_i)
+        return alpha
+
+    def message(self, x_j, alpha):
+        return alpha.unsqueeze(-1) * x_j
+class wrap_model(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.atom_emb = nn.Linear(92, 256)
+        self.edge_emb = nn.Linear(1, 128)
+        # self.gnn = DynamicEdgeConv(nn.Linear(512,256), k = 6)
+        self.gnn= RConv()
+        # self.gnn = CGConv(256,128)
+        self.out_lin = nn.Linear(256,1)
+        self.out_head = nn.Linear(256*4,6)
+    def forward(self, batch):
+        x,e, e_attr, b = batch.node_features, batch.edge_index, batch.atom_weights, batch.batch
+        x = self.atom_emb(x)
+        # e_attr = self.edge_emb(e_attr)
+        out = self.gnn(x,e, e_attr)
+        out = global_add_pool(out, b)
+        y_hat = self.out_lin(out)
+        return y_hat
 
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description=' prediction training')
     parser.add_argument('--layers', type=int, default=4, help="")
     parser.add_argument('--atom-input-features', type=int, default=92, help="")
     parser.add_argument('--hidden-features', type=int, default=256, help="")
     parser.add_argument('--output-features', type=int, default=9, help="")
-    parser.add_argument('--n-heads', type=int, default=4, help="")
-    parser.add_argument('--dataset', type = str, default='mp_3d_2020')
-    parser.add_argument('--num-train', type=int, default=10, help="")
-    parser.add_argument('--num-valid', type=int, default=5, help="")
-    parser.add_argument('--num-test', type=int, default=5, help="")
-    parser.add_argument('--batch-size', type=int, default=2, help="")
-    parser.add_argument('--data-path', type = str, default="./data/")
+    parser.add_argument('--n-heads', type=int, default=6, help="")
+    parser.add_argument('--dataset', type=str, default='mp_3d_2020')
+    parser.add_argument('--max-atoms', type = int, default= 20)
+    parser.add_argument('--num-train', type=int, default=100, help="")
+    parser.add_argument('--num-valid', type=int, default=25, help="")
+    parser.add_argument('--num-test', type=int, default=25, help="")
+    parser.add_argument('--batch-size', type=int, default=20, help="")
+    parser.add_argument('--data-path', type=str, default="./data/")
+    parser.add_argument('--alpha', type = float, default = 1.)
+    parser.add_argument('--beta', type = float, default=10.)
+    parser.add_argument('--gamma', type = float, default=1.)
+    parser.add_argument('--device', type=str, default='cuda:0', help="cuda device")
     args = parser.parse_args()
     from dataset import MaterialLoader
-    train_loader, valid_loader, test_loader, lattice_scaler = MaterialLoader(args)
-    for batch in train_loader:
-        pass
-    x = batch.node_features
-    e = batch.edge_index
-    import torch.nn as nn
-
-    atom_emb = nn.Linear(92,5)
-    x = atom_emb(x)
-    model =GATConv(5,5)
-    out = model(x,e)
-    print(out.shape)
+    train_loader, valid_loader, test_loader = MaterialLoader(args)
+    model = wrap_model()
+    model = model.to(args.device)
+    from torch import optim
+    import numpy as np
+    optimizer = optim.Adam(params= model.parameters(),
+                           lr = 0.0001)
+    loss_fn = nn.MSELoss()
+    model.train()
+    for e in range(100):
+        cnt = 0
+        losses = []
+        for batch in train_loader:
+            batch.to(args.device)
+            out = model(batch)
+            # loss = loss_fn(out, torch.cat((batch.lengths, batch.angles),dim=-1))
+            loss = loss_fn(out, batch.y.unsqueeze(dim=1))
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            losses.append(loss.item())
+        if (e+1) % 20 ==0:
+            print(f"epoch {e+1}, loss: {np.mean(losses):.3f}")
+    model.eval()
+    with torch.no_grad():
+        losses = []
+        for batch in test_loader:
+            batch.to(args.device)
+            out = model(batch)
+            # loss = loss_fn(out, torch.cat((batch.lengths, batch.angles),dim=-1))
+            loss = loss_fn(out, batch.y.unsqueeze(dim=1))
+            losses.append(loss.item())
+        print(f"test loss: {np.mean(losses): .3f}")
