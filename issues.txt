@@ -32,6 +32,11 @@ test spread graph edge attr with ones or with atom weights
 
 
 
+01.16
+strategy 2, spread graph
+compared gnns, think cgcnn works best
+but when running model.py, the kld loss is inf, basically the kld loss is too large even for roostconv
 
+strategy 1 ?
 
 

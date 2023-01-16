@@ -157,6 +157,27 @@ class RConv(MessagePassing):
     def message(self, x_j, alpha):
         return alpha.unsqueeze(-1) * x_j
 
+class CGConv(MessagePassing):
+    def __init__(self, args):
+        super().__init__()
+        self.gate = nn.Linear(args.hidden_features*2, args.hidden_features, bias=True)
+        self.mlp = nn.Linear(args.hidden_features*2, args.hidden_features, bias=True)
+        self.bn = nn.BatchNorm1d(args.hidden_features)
+        self.gate.reset_parameters()
+        self.mlp.reset_parameters()
+        self.bn.reset_parameters()
+
+
+    def forward(self, x, edge_index):
+        if isinstance(x, Tensor):
+            x = (x, x)
+        out = self.propagate(edge_index= edge_index, x = x)
+        out = self.bn(out)
+        out = out + x[1]
+        return out
+    def message(self, x_i, x_j):
+        z = torch.cat([x_i, x_j], dim = -1)
+        return self.gate(z).sigmoid() *F.softplus(self.mlp(z))
 
 class FormulaNet(nn.Module):
     def __init__(self, args):
@@ -165,13 +186,14 @@ class FormulaNet(nn.Module):
 
         self.hidden_features = args.hidden_features
         self.atom_embedding = MLPLayer(args.atom_input_features, args.hidden_features)
-        self.module_layers = nn.ModuleList([RConv(args) for idx in range(args.layers)])
+        self.module_layers = nn.ModuleList([CGConv(args) for idx in range(args.layers)])
 
     def forward(self, data):
         x, e, w, b = data.node_features, data.edge_index, data.atom_weights, data.batch
         x = self.atom_embedding(x)
         for module in self.module_layers:
-            x = module(x, e, w)
+            # x = module(x, e, w)
+            x = module(x,e) # CGCNN
         readout_x = global_add_pool(x, b)
         return x, readout_x
 
@@ -271,7 +293,7 @@ class latticeVAE(nn.Module):
         mu, log_var, z, n_z= self.encode(batch)
         decode_stat =  self.decode_stats(z, gt_num_atoms=batch.num_atoms)
         # kld loss for each n mu log_var?
-        kld_loss = 0.001*self.kld_loss(mu, log_var)
+        kld_loss = self.kld_loss(mu, log_var)
         return z,n_z, decode_stat, kld_loss
 
 
@@ -314,11 +336,11 @@ if __name__ == "__main__":
     parser.add_argument('--n-heads', type=int, default=6, help="")
     parser.add_argument('--dataset', type=str, default='mp_3d_2020')
     parser.add_argument('--max-atoms', type = int, default= 20)
-    parser.add_argument('--num-train', type=int, default=100, help="")
-    parser.add_argument('--num-valid', type=int, default=25, help="")
-    parser.add_argument('--num-test', type=int, default=25, help="")
-    parser.add_argument('--batch-size', type=int, default=20, help="")
-    parser.add_argument('--data-path', type=str, default=None)
+    parser.add_argument('--num-train', type=int, default=1000, help="")
+    parser.add_argument('--num-valid', type=int, default=50, help="")
+    parser.add_argument('--num-test', type=int, default=50, help="")
+    parser.add_argument('--batch-size', type=int, default=25, help="")
+    parser.add_argument('--data-path', type=str, default="./data/")
     parser.add_argument('--alpha', type = float, default = 1.)
     parser.add_argument('--beta', type = float, default=10.)
     parser.add_argument('--gamma', type = float, default=1.)

@@ -143,6 +143,102 @@ class GINConv(MessagePassing):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(nn={self.nn})'
 
+
+class GINEConv(MessagePassing):
+    def __init__(self, eps: float = 0,
+                 train_eps = False, edge_dim = 128, **kwargs):
+        kwargs.setdefault('aggr', 'add')
+        super().__init__(**kwargs)
+        self.nn = torch.nn.Sequential(Linear(256, 256),
+                                      BatchNorm1d(256),
+                                      torch.nn.ReLU())
+        self.initial_eps = eps
+        self.register_buffer('eps', torch.Tensor([eps]))
+        if isinstance(self.nn, torch.nn.Sequential):
+            nn = self.nn[0]
+        if hasattr(nn, 'in_features'):
+            in_channels = nn.in_features
+        if hasattr(nn, 'in_channels'):
+            in_channels = nn.in_channels
+        else:
+            raise ValueError("Could not infer input channels from 'nn'")
+        self.lin = Linear(edge_dim, in_channels)
+        # self.nn.reset_parameters()
+        self.eps.data.fill_(self.initial_eps)
+        self.lin.reset_parameters()
+
+    def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
+                edge_attr: OptTensor = None, size: Size = None):
+        if isinstance(x, Tensor):
+            x: OptPairTensor = (x,x)
+        out = self.propagate(edge_index, x =x, edge_attr = edge_attr, size = size)
+
+        x_r = x[1]
+        if x_r is not None:
+            out = out + (1+self.eps) * x_r
+
+        return self.nn(out)
+
+    def message(self, x_j: Tensor, edge_attr: Tensor):
+        if self.lin is None and x_j.size(-1) != edge_attr.size(-1):
+            raise ValueError("Node and edge feature dim don not match"
+                             "Consider setting the 'edge_dim' atrribute of 'GINEConv'")
+        if self.lin is not None:
+            edge_attr = self.lin(edge_attr)
+        return (x_j + edge_attr).relu()
+
+
+
+
+
+class GINEEConv(MessagePassing):
+    def __init__(self, eps: float = 0,
+                 train_eps = False, edge_dim = 640, **kwargs):
+        kwargs.setdefault('aggr', 'add')
+        super().__init__(**kwargs)
+        self.nn = torch.nn.Sequential(Linear(256, 256),
+                                      BatchNorm1d(256),
+                                      torch.nn.ReLU())
+        self.initial_eps = eps
+        self.register_buffer('eps', torch.Tensor([eps]))
+        # if isinstance(self.nn, torch.nn.Sequential):
+        #     nn = self.nn[0]
+        # if hasattr(nn, 'in_features'):
+        #     in_channels = nn.in_features
+        # if hasattr(nn, 'in_channels'):
+        #     in_channels = nn.in_channels
+        # else:
+        #     raise ValueError("Could not infer input channels from 'nn'")
+        self.mlp = Linear(256*3, 256)
+        # self.nn.reset_parameters()
+        self.eps.data.fill_(self.initial_eps)
+        self.mlp.reset_parameters()
+
+    def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
+                edge_attr: OptTensor = None, size: Size = None):
+        if isinstance(x, Tensor):
+            x: OptPairTensor = (x,x)
+        row, col = edge_index
+        new_e = self.mlp(torch.cat([x[0][row], x[0][col], edge_attr], dim=-1))
+        out = self.propagate(edge_index, x =x, edge_attr = new_e, size = size)
+
+        x_r = x[1]
+        if x_r is not None:
+            out = out + (1+self.eps) * x_r
+
+        return self.nn(out), new_e
+
+    def message(self, x_j: Tensor, edge_attr: Tensor):
+        # if self.lin is None and x_j.size(-1) != edge_attr.size(-1):
+        #     raise ValueError("Node and edge feature dim don not match"
+        #                      "Consider setting the 'edge_dim' atrribute of 'GINEConv'")
+        # if self.lin is not None:
+        #     edge_attr = self.lin(edge_attr)
+        return (x_j + edge_attr).relu()
+
+
+
+
 from typing import Tuple, Union
 
 import torch
@@ -350,7 +446,7 @@ class GATConv(MessagePassing):
         in_channels: Union[int, Tuple[int, int]],
         out_channels: int,
         heads: int = 4,
-        concat: bool = True,
+        concat: bool = False,
         negative_slope: float = 0.2,
         dropout: float = 0.0,
         add_self_loops: bool = True,
@@ -459,27 +555,27 @@ class GATConv(MessagePassing):
         alpha_dst = None if x_dst is None else (x_dst * self.att_dst).sum(-1)
         alpha = (alpha_src, alpha_dst)
 
-        if self.add_self_loops:
-            if isinstance(edge_index, Tensor):
-                # We only want to add self-loops for nodes that appear both as
-                # source and target nodes:
-                num_nodes = x_src.size(0)
-                if x_dst is not None:
-                    num_nodes = min(num_nodes, x_dst.size(0))
-                num_nodes = min(size) if size is not None else num_nodes
-                edge_index, edge_attr = remove_self_loops(
-                    edge_index, edge_attr)
-                edge_index, edge_attr = add_self_loops(
-                    edge_index, edge_attr, fill_value=self.fill_value,
-                    num_nodes=num_nodes)
-            elif isinstance(edge_index, SparseTensor):
-                if self.edge_dim is None:
-                    edge_index = set_diag(edge_index)
-                else:
-                    raise NotImplementedError(
-                        "The usage of 'edge_attr' and 'add_self_loops' "
-                        "simultaneously is currently not yet supported for "
-                        "'edge_index' in a 'SparseTensor' form")
+        # if self.add_self_loops:
+        #     if isinstance(edge_index, Tensor):
+        #         # We only want to add self-loops for nodes that appear both as
+        #         # source and target nodes:
+        #         num_nodes = x_src.size(0)
+        #         if x_dst is not None:
+        #             num_nodes = min(num_nodes, x_dst.size(0))
+        #         num_nodes = min(size) if size is not None else num_nodes
+        #         edge_index, edge_attr = remove_self_loops(
+        #             edge_index, edge_attr)
+        #         edge_index, edge_attr = add_self_loops(
+        #             edge_index, edge_attr, fill_value=self.fill_value,
+        #             num_nodes=num_nodes)
+        #     elif isinstance(edge_index, SparseTensor):
+        #         if self.edge_dim is None:
+        #             edge_index = set_diag(edge_index)
+        #         else:
+        #             raise NotImplementedError(
+        #                 "The usage of 'edge_attr' and 'add_self_loops' "
+        #                 "simultaneously is currently not yet supported for "
+        #                 "'edge_index' in a 'SparseTensor' form")
 
         # edge_updater_type: (alpha: OptPairTensor, edge_attr: OptTensor)
         alpha = self.edge_updater(edge_index, alpha=alpha, edge_attr=edge_attr)
@@ -565,7 +661,7 @@ class EdgeConv(MessagePassing):
             *e.g.*, defined by :class:`torch.nn.Sequential`.
         aggr (string, optional): The aggregation scheme to use
             (:obj:`"add"`, :obj:`"mean"`, :obj:`"max"`).
-            (default: :obj:`"max"`)
+            `"max"`)
         **kwargs (optional): Additional arguments of
             :class:`torch_geometric.nn.conv.MessagePassing`.
 
@@ -754,18 +850,33 @@ class wrap_model(nn.Module):
     def __init__(self):
         super().__init__()
         self.atom_emb = nn.Linear(92, 256)
-        self.edge_emb = nn.Linear(1, 128)
+        self.edge_emb = nn.Linear(1, 256)
         # self.gnn = DynamicEdgeConv(nn.Linear(512,256), k = 6)
-        self.gnn= RConv()
-        # self.gnn = CGConv(256,128)
-        self.out_lin = nn.Linear(256,1)
-        self.out_head = nn.Linear(256*4,6)
+        self.gnn= GINEEConv()
+        # self.gnn = CGConv(256, 256)
+        # self.gnn = GATConv(256, 256, heads = 1)
+        self.out_lin = nn.Linear(256,6)
+        self.gnns = nn.ModuleList([self.gnn for _ in range(4)])
     def forward(self, batch):
         x,e, e_attr, b = batch.node_features, batch.edge_index, batch.atom_weights, batch.batch
         x = self.atom_emb(x)
-        # e_attr = self.edge_emb(e_attr)
-        out = self.gnn(x,e, e_attr)
-        out = global_add_pool(out, b)
+        e_attr = self.edge_emb(e_attr)
+        # dynamic edge
+        # for mod in self.gnns:
+        #     x = mod(x,b)
+        # gine
+        # for mod in self.gnns:
+        #     x = mod(x,e, e_attr)
+        # ginee
+        for mod in self.gnns:
+            x,e_attr = mod(x,e,e_attr)
+        # CGCNN
+        # for mod in self.gnns:
+        #     x = mod(x, e, e_attr)
+        # GAT
+        # for mod in self.gnns:
+        #     x = mod(x,e)
+        out = global_add_pool(x, b)
         y_hat = self.out_lin(out)
         return y_hat
 
@@ -781,11 +892,11 @@ if __name__ == "__main__":
     parser.add_argument('--n-heads', type=int, default=6, help="")
     parser.add_argument('--dataset', type=str, default='mp_3d_2020')
     parser.add_argument('--max-atoms', type = int, default= 20)
-    parser.add_argument('--num-train', type=int, default=100, help="")
-    parser.add_argument('--num-valid', type=int, default=25, help="")
-    parser.add_argument('--num-test', type=int, default=25, help="")
-    parser.add_argument('--batch-size', type=int, default=20, help="")
-    parser.add_argument('--data-path', type=str, default="./data/")
+    parser.add_argument('--num-train', type=int, default=1000, help="")
+    parser.add_argument('--num-valid', type=int, default=50, help="")
+    parser.add_argument('--num-test', type=int, default=50, help="")
+    parser.add_argument('--batch-size', type=int, default=25, help="")
+    parser.add_argument('--data-path', type=str, default= "./data/")
     parser.add_argument('--alpha', type = float, default = 1.)
     parser.add_argument('--beta', type = float, default=10.)
     parser.add_argument('--gamma', type = float, default=1.)
@@ -801,19 +912,19 @@ if __name__ == "__main__":
                            lr = 0.0001)
     loss_fn = nn.MSELoss()
     model.train()
-    for e in range(100):
+    for e in range(500):
         cnt = 0
         losses = []
         for batch in train_loader:
             batch.to(args.device)
             out = model(batch)
-            # loss = loss_fn(out, torch.cat((batch.lengths, batch.angles),dim=-1))
-            loss = loss_fn(out, batch.y.unsqueeze(dim=1))
+            loss = loss_fn(out, torch.cat((batch.lengths, batch.angles),dim=-1))
+            # loss = loss_fn(out, batch.y.unsqueeze(dim=1))
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
             losses.append(loss.item())
-        if (e+1) % 20 ==0:
+        if (e+1) % 50 ==0:
             print(f"epoch {e+1}, loss: {np.mean(losses):.3f}")
     model.eval()
     with torch.no_grad():
@@ -821,7 +932,7 @@ if __name__ == "__main__":
         for batch in test_loader:
             batch.to(args.device)
             out = model(batch)
-            # loss = loss_fn(out, torch.cat((batch.lengths, batch.angles),dim=-1))
-            loss = loss_fn(out, batch.y.unsqueeze(dim=1))
+            loss = loss_fn(out, torch.cat((batch.lengths, batch.angles),dim=-1))
+            # loss = loss_fn(out, batch.y.unsqueeze(dim=1))
             losses.append(loss.item())
         print(f"test loss: {np.mean(losses): .3f}")

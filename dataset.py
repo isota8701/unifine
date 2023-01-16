@@ -160,6 +160,7 @@ def formula_to_spread_graph(string):
     node_features = np.array(node_features)
     # elem_weights = np.atleast_2d(weight) / np.sum(weight)
     atom_types = np.array(atom_types)
+    w_attr = torch.ones(len(alist)).view(-1, 1)
     return atom_types, node_features, edge_idx, w_attr
 
 def formula_to_dense_graph(string):
@@ -190,7 +191,7 @@ def formula_to_dense_graph(string):
 def process_one(mp_ids, crystal_array, crystal_string, labels):
     crystal = build_crystal(crystal_array)
     graph_arrays = build_crystal_graph(crystal, 'crystalnn')
-    formula_arrays = formula_to_dense_graph(crystal_string)
+    formula_arrays = formula_to_spread_graph(crystal_string)
     label_arrays = np.array(labels)
     result_dict = {
         'mp_ids': mp_ids,
