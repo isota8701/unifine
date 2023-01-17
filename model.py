@@ -5,7 +5,7 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch_scatter import scatter_add, scatter_max
+from torch_scatter import scatter_add, scatter_max, scatter_mean
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import global_add_pool
 from dataset import LoadDataset
@@ -283,25 +283,26 @@ class latticeDEC(nn.Module):
         self.fc_atom = nn.Linear(512,MAX_ATOMIC_NUM )
         self.device = args.device
     def predict_coord(self, n_z, num_atoms):
-        z_per_atom = n_z.repeat_interleave(num_atoms, dim=0)
-        pred_coords_per_atom = self.fc_coord(z_per_atom)
+        # z_per_atom = n_z.repeat_interleave(num_atoms, dim=0)
+        pred_coords_per_atom = self.fc_coord(n_z)
         return pred_coords_per_atom
-    def forward(self, z, decode_stats, batch):
+    def forward(self, nz, decode_stats, batch):
         rep_type = torch.LongTensor().to(self.device)
         for i in range(len(batch)):
             b = batch[i]
             cnt = torch.unique_consecutive(b.target_atom_types, return_counts = True)[1]
             rep_type = torch.cat((rep_type, cnt))
         assert rep_type.sum() == batch.target_num_atoms.sum()
-        pseudo_cart_coord = self.predict_coord(z,rep_type)
+        pseudo_cart_coord = self.predict_coord(nz,rep_type)
 
         (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles, pred_composition_per_atom) = decode_stats
         # what atom type, 3D? or predicted atom type or 2D <- use 2D,
 
-        h,  pred_cart_coord= self.decoder(
-        z, pseudo_cart_coord, batch.atom_types, batch.num_atoms, pred_lengths, pred_angles)
+        h,  pred_cart_coord_mean= self.decoder(
+        nz, pseudo_cart_coord, batch.atom_types, batch.num_atoms, pred_lengths, pred_angles)
         pred_atom_types = self.fc_atom(h)
-        return pred_cart_coord, pred_atom_types
+        return pseudo_cart_coord ,pred_cart_coord_mean, pred_atom_types
+
 
 if __name__ == "__main__":
     import argparse
@@ -314,10 +315,10 @@ if __name__ == "__main__":
     parser.add_argument('--n-heads', type=int, default=6, help="")
     parser.add_argument('--dataset', type=str, default='mp_3d_2020')
     parser.add_argument('--max-atoms', type = int, default= 20)
-    parser.add_argument('--num-train', type=int, default=100, help="")
-    parser.add_argument('--num-valid', type=int, default=25, help="")
-    parser.add_argument('--num-test', type=int, default=25, help="")
-    parser.add_argument('--batch-size', type=int, default=20, help="")
+    parser.add_argument('--num-train', type=int, default=1000, help="")
+    parser.add_argument('--num-valid', type=int, default=50, help="")
+    parser.add_argument('--num-test', type=int, default=50, help="")
+    parser.add_argument('--batch-size', type=int, default=25, help="")
     parser.add_argument('--data-path', type=str, default="./data/")
     parser.add_argument('--alpha', type = float, default = 1.)
     parser.add_argument('--beta', type = float, default=10.)
@@ -330,19 +331,21 @@ if __name__ == "__main__":
     model = model.to(args.device)
     lattDec = latticeDEC(args)
     lattDec = lattDec.to(args.device)
-    from loss import LatticeLoss
+    from loss import LatticeLoss, CoordLoss
     from torch import optim
     import numpy as np
     optimizer = optim.Adam(params= model.parameters(),
                            lr = 0.0001)
+    optimizer_dec = optim.Adam(params=lattDec.parameters())
 
+    lattLoss = LatticeLoss(args)
+    coordLoss = CoordLoss(args)
     for e in range(100):
         cnt = 0
         loss = []
         for batch in train_loader:
             batch.to(args.device)
             z,n_z, decode_stat, kld_loss= model(batch)
-            lattLoss = LatticeLoss(args)
             loss1 = lattLoss(decode_stat, batch)
             loss1+=kld_loss
             loss1.backward()
@@ -350,6 +353,13 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             cnt+=1
             loss.append(loss1.item())
-        print(f"epoch {e+1}, loss: {np.mean(loss):.3f}")
-        if e+1 == 100:
-            h,F = lattDec(n_z, decode_stat,batch)
+        if (e+1) % 10 == 0:
+            print(f"epoch {e+1}, loss: {np.mean(loss):.3f}")
+            n_z = n_z.detach()
+            decode_stat = (v.detach() for v in decode_stat)
+            pseudo_coord, pred_mean, pred_atom_type = lattDec(n_z, decode_stat,batch)
+            loss2 = coordLoss(pred_mean, batch)
+            loss2.backward()
+            optimizer_dec.step()
+            optimizer_dec.zero_grad()
+            print(f"coord loss: {loss2.item()}")

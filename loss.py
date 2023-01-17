@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from torch_scatter import scatter
 import torch.nn.functional as F
+from torch_scatter import scatter_mean
+from utils import cart_to_frac_coords, frac_to_cart_coords, min_distance_sqr_pbc
 
 class LatticeLoss(nn.Module):
     def __init__(self,args):
@@ -44,40 +46,50 @@ class LatticeLoss(nn.Module):
         return scatter(loss, batch.batch, reduce='mean').mean()
 
 
-# class CoordLoss(nn.Module):
-#     def __init__(self, args):
-#         super().__init__()
-#     def forward(self, pred_cart_coord, batch):
-#
-#
-#
-#
-#     def coord_loss(self, pred_cart_coord_diff, noisy_frac_coords,
-#                    used_sigmas_per_atom, batch):
-#
-#         target_cart_coords = frac_to_cart_coords(
-#             batch.frac_coords, batch.lengths, batch.angles, batch.num_atoms)
-#         _, target_cart_coord_diff = min_distance_sqr_pbc(
-#             target_cart_coords, noisy_cart_coords, batch.lengths, batch.angles,
-#             batch.num_atoms, self.device, return_vector=True)
-#
-#         target_cart_coord_diff = target_cart_coord_diff / \
-#                                  used_sigmas_per_atom[:, None] ** 2
-#         pred_cart_coord_diff = pred_cart_coord_diff / \
-#                                used_sigmas_per_atom[:, None]
-#
-#         loss_per_atom = torch.sum(
-#             (target_cart_coord_diff - pred_cart_coord_diff) ** 2, dim=1)
-#
-#         loss_per_atom = 0.5 * loss_per_atom * used_sigmas_per_atom ** 2
-#         return scatter(loss_per_atom, batch.batch, reduce='mean').mean()
-#
-#     def type_loss(self, pred_atom_types, target_atom_types,
-#                   used_type_sigmas_per_atom, batch):
-#         target_atom_types = target_atom_types - 1
-#         loss = F.cross_entropy(
-#             pred_atom_types, target_atom_types, reduction='none')
-#         # rescale loss according to noise
-#         loss = loss / used_type_sigmas_per_atom
-#         return scatter(loss, batch.batch, reduce='mean').mean()
-#
+class CoordLoss(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.device = args.device
+    def forward(self, pred_cart_coord_mean, batch):
+        loss = self.coord_loss(pred_cart_coord_mean, batch)
+        return loss
+    def compute_gt_coord_mean(self,batch):
+        atom_index = []
+        cnt = -1
+        for inx, atm in enumerate(batch.target_atom_types):
+            if atm != batch.target_atom_types[inx - 1]:
+                cnt += 1
+            atom_index.append(cnt)
+        atom_index = torch.LongTensor(atom_index)
+        atom_index = atom_index.to(self.device)
+        gt_coord_mean = scatter_mean(batch.target_coords, index=atom_index, dim=0)
+        return gt_coord_mean, atom_index
+    def coord_loss(self, pred_cart_coord_mean, batch):
+        gt_coord_mean, atom_index = self.compute_gt_coord_mean(batch)
+
+        target_cart_coords = frac_to_cart_coords(
+            gt_coord_mean, batch.lengths, batch.angles, batch.num_atoms)
+        # _, target_cart_coord_diff = min_distance_sqr_pbc(
+        #     target_cart_coords, pseudo_cart_coord, batch.lengths, batch.angles,
+        #     batch.num_atoms, self.device, return_vector=True)
+
+        # target_cart_coord_diff = target_cart_coord_diff / \
+        #                          used_sigmas_per_atom[:, None] ** 2
+        # pred_cart_coord_diff = pred_cart_coord_diff / \
+        #                        used_sigmas_per_atom[:, None]
+
+        loss_per_atom = torch.sum(
+            (target_cart_coords - pred_cart_coord_mean) ** 2, dim=1)
+
+        # loss_per_atom = 0.5 * loss_per_atom * used_sigmas_per_atom ** 2
+        return scatter(loss_per_atom, batch.batch, reduce='mean').mean()
+
+    def type_loss(self, pred_atom_types, target_atom_types,
+                  used_type_sigmas_per_atom, batch):
+        target_atom_types = target_atom_types - 1
+        loss = F.cross_entropy(
+            pred_atom_types, target_atom_types, reduction='none')
+        # rescale loss according to noise
+        loss = loss / used_type_sigmas_per_atom
+        return scatter(loss, batch.batch, reduce='mean').mean()
+
