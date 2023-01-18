@@ -172,8 +172,8 @@ class FormulaNet(nn.Module):
         x = self.atom_embedding(x)
         for module in self.module_layers:
             x = module(x, e, w)
-        readout_x = global_add_pool(x, b)
-        return x, readout_x
+        # readout_x = global_add_pool(x, b)
+        return x
 
 
 def build_mlp(in_dim, hidden_dim, fc_num_layers, out_dim):
@@ -205,25 +205,21 @@ class latticeVAE(nn.Module):
         self.lattice_scaler = torch.load("./data/" + "lattice_scaler.pt")
 
     def encode(self, batch):
-        n_hidden, hidden= self.encoder(batch)
-        mu = self.fc_mu(hidden)
-        log_var = self.fc_var(hidden)
-        z = self.reparameterize(mu, log_var)
-        # parameter share or not?
-        n_mu = self.fc_mu(n_hidden)
-        n_log_var = self.fc_var(n_hidden)
-        n_z = self.reparameterize(n_mu, n_log_var)
-        return mu, log_var, z, n_z
+        nh = self.encoder(batch)
+        mu = self.fc_mu(nh)
+        log_var = self.fc_var(nh)
+        nz = self.reparameterize(mu, log_var)
+        return mu, log_var, nz
 
-    def decode_stats(self, z, gt_num_atoms):
+    def decode_stats(self, z, batch):
         """
         decode key stats from latent embeddings.
         batch is input during training for teach-forcing
         """
-        num_atoms = self.predict_num_atoms(z)
+        num_atoms = self.predict_num_atoms(z,batch)
         lengths_and_angles, lengths, angles = (
-            self.predict_lattice(z, gt_num_atoms))
-        composition_per_atom = self.predict_composition(z, gt_num_atoms)
+            self.predict_lattice(z, batch))
+        composition_per_atom = self.predict_composition(z)
         return num_atoms, lengths_and_angles, lengths, angles, composition_per_atom
 
     def reparameterize(self, mu, logvar):
@@ -238,14 +234,17 @@ class latticeVAE(nn.Module):
         eps = torch.randn_like(std)
         return eps * std + mu
 
-    def predict_num_atoms(self, z):
+    def predict_num_atoms(self, nz, batch):
+        z = global_add_pool(nz, batch.batch)
         return self.fc_num_atoms(z)
 
     def predict_property(self, z):
         self.scaler.match_device(z)
         return self.scaler.inverse_transform(self.fc_property(z))
 
-    def predict_lattice(self, z, num_atoms):
+    def predict_lattice(self, nz, batch):
+        z = global_add_pool(nz, batch.batch)
+        num_atoms = batch.num_atoms
         pred_lengths_and_angles = self.fc_lattice(z)  # (N, 6)
         self.lattice_scaler.match_device(z)
         scaled_preds = self.lattice_scaler.inverse_transform(
@@ -256,9 +255,9 @@ class latticeVAE(nn.Module):
         # <pred_lengths_and_angles> is scaled.
         return pred_lengths_and_angles, pred_lengths, pred_angles
 
-    def predict_composition(self, z, num_atoms):
-        z_per_atom = z.repeat_interleave(num_atoms, dim=0)
-        pred_composition_per_atom = self.fc_composition(z_per_atom)
+    def predict_composition(self, nz):
+        # z_per_atom = z.repeat_interleave(num_atoms, dim=0)
+        pred_composition_per_atom = self.fc_composition(nz)
         return pred_composition_per_atom
 
 
@@ -268,11 +267,11 @@ class latticeVAE(nn.Module):
         return kld_loss
 
     def forward(self, batch):
-        mu, log_var, z, n_z= self.encode(batch)
-        decode_stat =  self.decode_stats(z, gt_num_atoms=batch.num_atoms)
+        mu, log_var, nz= self.encode(batch)
+        decode_stat =  self.decode_stats(nz,batch)
         # kld loss for each n mu log_var?
         kld_loss = 0.001*self.kld_loss(mu, log_var)
-        return z,n_z, decode_stat, kld_loss
+        return nz, decode_stat, kld_loss
 
 
 class latticeDEC(nn.Module):
@@ -283,8 +282,8 @@ class latticeDEC(nn.Module):
         self.fc_atom = nn.Linear(512,MAX_ATOMIC_NUM )
         self.device = args.device
     def predict_coord(self, n_z, num_atoms):
-        # z_per_atom = n_z.repeat_interleave(num_atoms, dim=0)
-        pred_coords_per_atom = self.fc_coord(n_z)
+        z_per_atom = n_z.repeat_interleave(num_atoms, dim=0)
+        pred_coords_per_atom = self.fc_coord(z_per_atom)
         return pred_coords_per_atom
     def forward(self, nz, decode_stats, batch):
         rep_type = torch.LongTensor().to(self.device)
@@ -293,15 +292,16 @@ class latticeDEC(nn.Module):
             cnt = torch.unique_consecutive(b.target_atom_types, return_counts = True)[1]
             rep_type = torch.cat((rep_type, cnt))
         assert rep_type.sum() == batch.target_num_atoms.sum()
-        pseudo_cart_coord = self.predict_coord(nz,rep_type)
-
+        pseudo_mean_coord = self.predict_coord(nz,rep_type)
+        coord_var = torch.nn.Parameter(torch.Tensor(pseudo_mean_coord.shape)).to(self.device)
+        pseudo_cart_coord = pseudo_mean_coord + coord_var
         (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles, pred_composition_per_atom) = decode_stats
         # what atom type, 3D? or predicted atom type or 2D <- use 2D,
 
-        h,  pred_cart_coord_mean= self.decoder(
+        h,  pred_cart_coord= self.decoder(
         nz, pseudo_cart_coord, batch.atom_types, batch.num_atoms, pred_lengths, pred_angles)
         pred_atom_types = self.fc_atom(h)
-        return pseudo_cart_coord ,pred_cart_coord_mean, pred_atom_types
+        return pred_cart_coord, pred_atom_types
 
 
 if __name__ == "__main__":
@@ -345,7 +345,7 @@ if __name__ == "__main__":
         loss = []
         for batch in train_loader:
             batch.to(args.device)
-            z,n_z, decode_stat, kld_loss= model(batch)
+            nz, decode_stat, kld_loss= model(batch)
             loss1 = lattLoss(decode_stat, batch)
             loss1+=kld_loss
             loss1.backward()
@@ -355,11 +355,24 @@ if __name__ == "__main__":
             loss.append(loss1.item())
         if (e+1) % 10 == 0:
             print(f"epoch {e+1}, loss: {np.mean(loss):.3f}")
-            n_z = n_z.detach()
-            decode_stat = (v.detach() for v in decode_stat)
-            pseudo_coord, pred_mean, pred_atom_type = lattDec(n_z, decode_stat,batch)
-            loss2 = coordLoss(pred_mean, batch)
-            loss2.backward()
-            optimizer_dec.step()
-            optimizer_dec.zero_grad()
-            print(f"coord loss: {loss2.item()}")
+            # n_z = n_z.detach()
+            # decode_stat = (v.detach() for v in decode_stat)
+            # pseudo_coord, pred_mean, pred_atom_type = lattDec(n_z, decode_stat,batch)
+            # loss2 = coordLoss(pred_mean, batch)
+            # loss2.backward()
+            # optimizer_dec.step()
+            # optimizer_dec.zero_grad()
+            # print(f"coord loss: {loss2.item()}")
+    if (e+1) == 100:
+        print(f"finished")
+        model.eval()
+        losses = []
+        with torch.no_grad():
+            for batch in test_loader:
+                batch.to(args.device)
+                nz, decode_stat, kld_loss = model(batch)
+                loss1 = lattLoss(decode_stat, batch)
+                loss1 += kld_loss
+                losses.append(loss1.item())
+            print(f"{np.mean(losses): .3f}")
+            pred_coord, pred_type = lattDec(nz, decode_stat, batch)

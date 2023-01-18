@@ -533,10 +533,10 @@ class GemNetT(torch.nn.Module):
         # Embedding block
         h = self.atom_emb(atomic_numbers)
         # Merge z and atom embedding
-        if z is not None:
+        # if z is not None:
             # z_per_atom = z.repeat_interleave(num_atoms, dim=0)
-            h = torch.cat([h, z], dim=1)
-            h = self.atom_latent_emb(h)
+            # h = torch.cat([h, z], dim=1)
+            # h = self.atom_latent_emb(h)
         # (nAtoms, emb_size_atom)
         m = self.edge_emb(h, rbf, idx_s, idx_t)  # (nEdges, emb_size_edge)
 
