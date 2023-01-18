@@ -160,7 +160,7 @@ def formula_to_spread_graph(string):
     node_features = np.array(node_features)
     # elem_weights = np.atleast_2d(weight) / np.sum(weight)
     atom_types = np.array(atom_types)
-    w_attr = torch.ones(len(alist)).view(-1, 1)
+    # w_attr = torch.ones(len(alist)).view(-1, 1)
     return atom_types, node_features, edge_idx, w_attr
 
 def formula_to_dense_graph(string):

@@ -508,7 +508,7 @@ class GATConv(MessagePassing):
             self.lin_edge.reset_parameters()
         torch.nn.init.xavier_uniform_(self.att_src)
         torch.nn.init.xavier_uniform_(self.att_dst)
-        # torch.nn.init.xavier_uniform_(self.att_edge)
+        torch.nn.init.xavier_uniform_(self.att_edge)
         torch.nn.init.zeros_(self.bias)
 
     def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
@@ -846,17 +846,17 @@ class RConv(MessagePassing):
 
     def message(self, x_j, alpha):
         return alpha.unsqueeze(-1) * x_j
-class wrap_model(nn.Module):
-    def __init__(self):
+class FormulaEncoder(nn.Module):
+    def __init__(self,args):
         super().__init__()
-        self.atom_emb = nn.Linear(92, 256)
-        self.edge_emb = nn.Linear(1, 256)
+        self.atom_emb = nn.Linear(args.atom_input_features, args.hidden_features)
+        self.edge_emb = nn.Linear(1, args.hidden_features)
         # self.gnn = DynamicEdgeConv(nn.Linear(512,256), k = 6)
-        self.gnn= GINEEConv()
-        # self.gnn = CGConv(256, 256)
-        # self.gnn = GATConv(256, 256, heads = 1)
-        self.out_lin = nn.Linear(256,6)
+        # self.gnn= GINEEConv()
+        # self.gnn = CGConv(args.hidden_features)
+        self.gnn = GATConv(args.hidden_features, args.hidden_features, edge_dim= 256, heads = 4)
         self.gnns = nn.ModuleList([self.gnn for _ in range(4)])
+
     def forward(self, batch):
         x,e, e_attr, b = batch.node_features, batch.edge_index, batch.atom_weights, batch.batch
         x = self.atom_emb(x)
@@ -868,17 +868,72 @@ class wrap_model(nn.Module):
         # for mod in self.gnns:
         #     x = mod(x,e, e_attr)
         # ginee
-        for mod in self.gnns:
-            x,e_attr = mod(x,e,e_attr)
+        # for mod in self.gnns:
+        #     x,e_attr = mod(x,e,e_attr)
         # CGCNN
         # for mod in self.gnns:
-        #     x = mod(x, e, e_attr)
+        #     x = mod(x, e )
         # GAT
-        # for mod in self.gnns:
-        #     x = mod(x,e)
-        out = global_add_pool(x, b)
-        y_hat = self.out_lin(out)
-        return y_hat
+        for mod in self.gnns:
+            x = mod(x,e, e_attr)
+        return x
+
+class VAE(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.encoder = FormulaEncoder(args)
+        self.fc_mu = nn.Linear(args.hidden_features,
+                               args.hidden_features)
+        self.fc_var = nn.Linear(args.hidden_features,
+                                args.hidden_features)
+        self.fc_num_atoms = self.build_mlp(args.hidden_features, args.hidden_features, 20, 2)
+        self.fc_composition = self.build_mlp(args.hidden_features, args.hidden_features, 100, 2)
+
+    def encode(self, batch):
+        nh = self.encoder(batch)  # batch * d
+        mu = self.fc_mu(nh)
+        log_var = self.fc_var(nh)
+        nz = self.reparameterize(mu, log_var)
+        return nz, mu, log_var
+    def pred_num_atoms(self, nz,batch):
+        z = global_add_pool(nz, batch.batch)
+        return self.fc_num_atoms(z)
+    def pred_compostion(self, nz, batch):
+        gt_num_atoms = batch.target_num_atoms
+        # nz_per_atoms = nz.repeat_interleave(gt_num_atoms, dim=0)
+        return self.fc_composition(nz)
+    def reparameterize(self, mu, logvar):
+        """
+        Reparameterization trick to sample from N(mu, var) from
+        N(0,1).
+        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+        :return: (Tensor) [B x D]
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
+    def build_mlp(self, in_dim, hidden_dim, out_dim, num_layers):
+        mod = [nn.Linear(in_dim, hidden_dim), nn.ReLU()]
+        for i in range(num_layers - 1):
+            mod += [nn.Linear(hidden_dim, hidden_dim), nn.ReLU()]
+        mod += [nn.Linear(hidden_dim, out_dim)]
+        return nn.Sequential(*mod)
+    def decode_stats(self, z, batch):
+        pred_num_atoms = self.pred_num_atoms(z, batch)
+        pred_composition = self.pred_compostion(z, batch)
+        return pred_num_atoms, pred_composition
+    def forward(self, batch):
+        z, mu, logvar = self.encode(batch)
+        pred_num_atoms, pred_composition = self.decode_stats(z, batch)
+        return pred_num_atoms, pred_composition, mu, logvar, z
+
+
+def kld_loss(mu, log_var):
+    kld_loss = torch.mean(
+        -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
+    return kld_loss
+
 
 
 if __name__ == "__main__":
@@ -904,22 +959,24 @@ if __name__ == "__main__":
     args = parser.parse_args()
     from dataset import MaterialLoader
     train_loader, valid_loader, test_loader = MaterialLoader(args)
-    model = wrap_model()
+    model = VAE(args)
     model = model.to(args.device)
     from torch import optim
     import numpy as np
     optimizer = optim.Adam(params= model.parameters(),
                            lr = 0.0001)
-    loss_fn = nn.MSELoss()
+    loss_fn = nn.CrossEntropyLoss()
     model.train()
-    for e in range(500):
+    for e in range(200):
         cnt = 0
         losses = []
         for batch in train_loader:
             batch.to(args.device)
-            out = model(batch)
-            loss = loss_fn(out, torch.cat((batch.lengths, batch.angles),dim=-1))
-            # loss = loss_fn(out, batch.y.unsqueeze(dim=1))
+            pred_num_atoms, pred_composition, mu, var ,z = model(batch)
+            num_loss = loss_fn(pred_num_atoms, batch.target_num_atoms)
+            comp_loss = loss_fn(pred_composition, batch.target_atom_types)
+            kl_loss = kld_loss(mu, var)
+            loss = num_loss + comp_loss + kl_loss
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -931,8 +988,11 @@ if __name__ == "__main__":
         losses = []
         for batch in test_loader:
             batch.to(args.device)
-            out = model(batch)
-            loss = loss_fn(out, torch.cat((batch.lengths, batch.angles),dim=-1))
-            # loss = loss_fn(out, batch.y.unsqueeze(dim=1))
+            pred_num_atoms, pred_composition, mu, var, z= model(batch)
+            num_loss = loss_fn(pred_num_atoms, batch.target_num_atoms)
+            comp_loss = loss_fn(pred_composition, batch.target_atom_types)
+            kl_loss = kl= kld_loss(mu, var)
+            loss = num_loss + comp_loss + kl_loss
             losses.append(loss.item())
         print(f"test loss: {np.mean(losses): .3f}")
+        print(pred_num_atoms.argmax(dim=-1))
