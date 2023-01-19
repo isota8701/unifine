@@ -739,9 +739,9 @@ class DynamicEdgeConv(MessagePassing):
         self.nn = nn
         self.k = k
         self.num_workers = num_workers
-        self.nn.reset_parameters()
+        # self.nn.reset_parameters()
     def reset_parameters(self):
-        self.nn.reset_paramerters()
+        self.nn.reset_parameters()
 
 
     def forward(
@@ -851,10 +851,12 @@ class FormulaEncoder(nn.Module):
         super().__init__()
         self.atom_emb = nn.Linear(args.atom_input_features, args.hidden_features)
         self.edge_emb = nn.Linear(1, args.hidden_features)
-        # self.gnn = DynamicEdgeConv(nn.Linear(512,256), k = 6)
+        self.dynamic_edge_nn = nn.Sequential(nn.Linear(args.hidden_features*2, args.hidden_features),
+                                             nn.ReLU())
+        self.gnn = DynamicEdgeConv(self.dynamic_edge_nn,k = 6)
         # self.gnn= GINEEConv()
         # self.gnn = CGConv(args.hidden_features)
-        self.gnn = GATConv(args.hidden_features, args.hidden_features, edge_dim= 256, heads = 4)
+        # self.gnn = GATConv(args.hidden_features, args.hidden_features, edge_dim= 256, heads = 4)
         self.gnns = nn.ModuleList([self.gnn for _ in range(4)])
 
     def forward(self, batch):
@@ -862,8 +864,8 @@ class FormulaEncoder(nn.Module):
         x = self.atom_emb(x)
         e_attr = self.edge_emb(e_attr)
         # dynamic edge
-        # for mod in self.gnns:
-        #     x = mod(x,b)
+        for mod in self.gnns:
+            x = mod(x,b)
         # gine
         # for mod in self.gnns:
         #     x = mod(x,e, e_attr)
@@ -874,8 +876,8 @@ class FormulaEncoder(nn.Module):
         # for mod in self.gnns:
         #     x = mod(x, e )
         # GAT
-        for mod in self.gnns:
-            x = mod(x,e, e_attr)
+        # for mod in self.gnns:
+        #     x = mod(x,e, e_attr)
         return x
 
 class VAE(nn.Module):
@@ -898,8 +900,8 @@ class VAE(nn.Module):
     def pred_num_atoms(self, nz,batch):
         z = global_add_pool(nz, batch.batch)
         return self.fc_num_atoms(z)
-    def pred_compostion(self, nz, batch):
-        gt_num_atoms = batch.target_num_atoms
+    def pred_compostion(self, nz):
+        # gt_num_atoms = batch.target_num_atoms
         # nz_per_atoms = nz.repeat_interleave(gt_num_atoms, dim=0)
         return self.fc_composition(nz)
     def reparameterize(self, mu, logvar):
@@ -921,7 +923,7 @@ class VAE(nn.Module):
         return nn.Sequential(*mod)
     def decode_stats(self, z, batch):
         pred_num_atoms = self.pred_num_atoms(z, batch)
-        pred_composition = self.pred_compostion(z, batch)
+        pred_composition = self.pred_compostion(z)
         return pred_num_atoms, pred_composition
     def forward(self, batch):
         z, mu, logvar = self.encode(batch)
@@ -996,3 +998,7 @@ if __name__ == "__main__":
             losses.append(loss.item())
         print(f"test loss: {np.mean(losses): .3f}")
         print(pred_num_atoms.argmax(dim=-1))
+        print(batch.num_atoms)
+        print('')
+        print(pred_composition.argmax(dim=-1))
+        print(batch.target_atom_types)
