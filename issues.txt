@@ -3,13 +3,22 @@
 
 
 
-2023.01.11
-1) re defined latent z and latent n_z for predicting coordinates
-2) should i add kld loss for n_mu, n_log_var?
-3) should the mlp predicting mu, log_var, n_mu, n_log_var parameter shared or not?
-4) lattice loss is too large, should i split dense graph and spread graph each?
-5) to decide 4) i should check the validity of predicted lattice for my first milestone
-6) for 5) the cdvae eval_utils file might help
-7) check the coord loss fn working well
-8) to wrap up, if 1to7 works, i should clean up the dataset.py and model.py for purpose
-9) reporting at AOI should be done at level 5)
+2023.01.19
+
+idea is to drop and replace cdvae encoder to formula net
+but since i think we need to predict 3d atom types and numbers and lattice
+how about 2 encoders and z matching between 2, subset of contrastive learning perhaps
+
+
+
+01.20
+first implemented cdvae with formula encoder
+but if loss backprop is done, the build graph makes error!
+'''
+assert block_inc == 0  # Implementing this is not worth the effort
+RuntimeError: Boolean value of Tensor with more than one value is ambiguous
+'''
+first check cdvae loss for 3d gnn(dimenet encoder)
+and then code contrastive learning and see loss decrease
+between code contrastive learning and property prediction acc for only formula net
+issue) contrastive with hiddens or mu or z check which is best

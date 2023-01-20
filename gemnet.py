@@ -409,8 +409,8 @@ class GemNetT(torch.nn.Module):
             # )
         return edge_index, cell_offsets, neighbors, edge_dist, edge_vector
 
-    def generate_interaction_graph(self, cart_coords, lengths, angles,num_atoms  ):
-
+    def generate_interaction_graph(self, cart_coords, lengths, angles,
+                                   num_atoms):
         if self.otf_graph:
             edge_index, to_jimages, num_bonds = radius_graph_pbc(
                 cart_coords, lengths, angles, num_atoms, self.cutoff, self.max_neighbors,
@@ -492,7 +492,8 @@ class GemNetT(torch.nn.Module):
             id3_ragged_idx,
         )
 
-    def forward(self, z,  pseudo_cart_coord, atom_types, num_atoms, lengths, angles,):
+    def forward(self, z, frac_coords, atom_types, num_atoms, lengths, angles):
+                # edge_index, to_jimages, num_bonds):
         """
         args:
             z: (N_cryst, num_latent)
@@ -505,8 +506,7 @@ class GemNetT(torch.nn.Module):
             atom_frac_coords: (N_atoms, 3)
             atom_types: (N_atoms, MAX_ATOMIC_NUM)
         """
-        pos = pseudo_cart_coord
-        # pos = frac_to_cart_coords(frac_coords, lengths, angles, num_atoms)
+        pos = frac_to_cart_coords(frac_coords, lengths, angles, num_atoms)
         batch = torch.arange(num_atoms.size(0),
                              device=num_atoms.device).repeat_interleave(
                                  num_atoms, dim=0)
@@ -521,7 +521,8 @@ class GemNetT(torch.nn.Module):
             id3_ba,
             id3_ca,
             id3_ragged_idx,
-        ) = self.generate_interaction_graph(pos, lengths, angles, num_atoms)
+        ) = self.generate_interaction_graph(
+            pos, lengths, angles, num_atoms)
         idx_s, idx_t = edge_index
 
         # Calculate triplet angles
@@ -533,10 +534,10 @@ class GemNetT(torch.nn.Module):
         # Embedding block
         h = self.atom_emb(atomic_numbers)
         # Merge z and atom embedding
-        # if z is not None:
-            # z_per_atom = z.repeat_interleave(num_atoms, dim=0)
-            # h = torch.cat([h, z], dim=1)
-            # h = self.atom_latent_emb(h)
+        if z is not None:
+            z_per_atom = z.repeat_interleave(num_atoms, dim=0)
+            h = torch.cat([h, z_per_atom], dim=1)
+            h = self.atom_latent_emb(h)
         # (nAtoms, emb_size_atom)
         m = self.edge_emb(h, rbf, idx_s, idx_t)  # (nEdges, emb_size_edge)
 

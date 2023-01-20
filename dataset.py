@@ -15,6 +15,7 @@ from utils import *
 from jarvis.core.specie import get_node_attributes
 from jarvis.core.specie import Specie
 from joblib import Parallel, delayed
+from config import cfg
 
 CrystalNN = local_env.CrystalNN(
     distance_cutoffs=None, x_diff_weight=-1, porous_adjustment=False)
@@ -293,12 +294,12 @@ class LoadDataset(torch.utils.data.Dataset):
     # )
         data.update(lengths=torch.Tensor(lengths).view(1, -1),
                     angles=torch.Tensor(angles).view(1, -1),
-                    target_coords = torch.Tensor(frac_coords),
-                    target_atom_types = torch.LongTensor(atom_types),
-                    target_edge_index = torch.LongTensor(
+                    frac_coords = torch.Tensor(frac_coords),
+                    trg_atom_types = torch.LongTensor(atom_types),
+                    trg_edge_index = torch.LongTensor(
                         edge_indices.T).contiguous(),
                     to_jimages = torch.LongTensor(to_jimages),
-                    target_num_atoms = atom_types.shape[0]
+                    trg_num_atoms = atom_types.shape[0]
                     )
         return data
 
@@ -315,44 +316,30 @@ def get_scaler(data_list):
     #     key=train_dataset.prop)
     return lattice_scaler
 
-def MaterialLoader(args):
-    num = args.num_train + args.num_valid + args.num_test
-    data = LoadDataset(args.dataset, num, args.max_atoms, path = args.data_path)
+def MaterialLoader():
+    num = cfg.NUM_TRAIN + cfg.NUM_VALID + cfg.NUM_TEST
+    data = LoadDataset(cfg.DATASET_NAME, num, cfg.MAX_ATOMS, path = cfg.DATA_DIR)
 
-    train_cash = data.cached_data[:args.num_train]
+    train_cash = data.cached_data[:cfg.NUM_TRAIN]
     lattice_scaler = get_scaler(train_cash)
-    torch.save(lattice_scaler, "./data/lattice_scaler.pt")
+    torch.save(lattice_scaler, cfg.SCALER_DIR + "lattice_scaler.pt")
     data_list = [d for d in data]
-    train_set = data_list[:args.num_train]
-    valid_set = data_list[args.num_train:args.num_train+args.num_valid]
-    test_set = data_list[args.num_train+args.num_valid:]
+    train_set = data_list[:cfg.NUM_TRAIN]
+    valid_set = data_list[cfg.NUM_TRAIN:cfg.NUM_TRAIN+cfg.NUM_VALID]
+    test_set = data_list[cfg.NUM_TRAIN+cfg.NUM_VALID:]
 
     train_loader = DataLoader(train_set,
-                              batch_size=args.batch_size,
+                              batch_size=cfg.TRAIN.batch_size,
                               shuffle=True)
     valid_loader = DataLoader(valid_set,
-                              batch_size=args.batch_size,
+                              batch_size=cfg.TRAIN.batch_size,
                               shuffle=True)
     test_loader = DataLoader(test_set,
-                             batch_size=args.batch_size,
+                             batch_size=cfg.TRAIN.batch_size,
                              shuffle=True)
     return train_loader, valid_loader, test_loader
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description=' prediction training')
-    parser.add_argument('--layers', type=int, default=4, help="")
-    parser.add_argument('--atom-input-features', type=int, default=92, help="")
-    parser.add_argument('--hidden-features', type=int, default=256, help="")
-    parser.add_argument('--output-features', type=int, default=9, help="")
-    parser.add_argument('--n-heads', type=int, default=4, help="")
-    parser.add_argument('--dataset', type = str, default='mp_3d_2020')
-    parser.add_argument('--num-train', type=int, default=100, help="")
-    parser.add_argument('--num-valid', type=int, default=50, help="")
-    parser.add_argument('--num-test', type=int, default=50, help="")
-    parser.add_argument('--batch-size', type=int, default=10, help="")
-    parser.add_argument('--data-path', type = str, default="./data/")
-    args = parser.parse_args()
-    train_loader, valid_loader, test_loader = MaterialLoader(args)
+    train_loader, valid_loader, test_loader = MaterialLoader()
     print("")
