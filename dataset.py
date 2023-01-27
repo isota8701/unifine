@@ -229,6 +229,24 @@ def curate(dataset, num, max_atoms):
         df_ = df_.iloc[:num]
     return df_
 
+class PairData(Data):
+    def __init__(self, edge_index_s =None, atom_types_s = None,
+                 edge_index_t = None, atom_types_t = None, **kwargs):
+        super().__init__()
+        self.edge_index_s = edge_index_s
+        self.atom_types_s = atom_types_s
+        self.edge_index_t = edge_index_t
+        self.atom_types_t = atom_types_t
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+    def __inc__(self, key, value, *args, **kwargs):
+        if key == 'edge_index_s':
+            return self.atom_types_s.size(0)
+        if key == 'edge_index_t':
+            return self.atom_types_t.size(0)
+        else:
+            return super().__inc__(key, value, *args, **kwargs)
+
 
 class LoadDataset(torch.utils.data.Dataset):
     def __init__(self, dataset, num, max_atoms, num_workers=12, path = None):
@@ -270,40 +288,25 @@ class LoadDataset(torch.utils.data.Dataset):
          to_jimages, num_atoms) = data_dict['graph_arrays']
         (f_atom_types, f_node_features,
          f_edge_indices, f_elem_weights) = data_dict['formula_arrays']
-        data = Data(
-            node_features = torch.Tensor(f_node_features),
-            atom_types=torch.LongTensor(f_atom_types),
-            edge_index=torch.LongTensor(
+        data = PairData(
+            node_features_s = torch.Tensor(f_node_features),
+            atom_types_s=torch.LongTensor(f_atom_types),
+            edge_index_s=torch.LongTensor(
                 f_edge_indices),  # shape (2, num_edges)
-            num_atoms=f_atom_types.shape[0],
-            num_bonds=f_edge_indices.shape[-1],
-            atom_weights = torch.Tensor(f_elem_weights).reshape(-1,1),
-            num_nodes=f_atom_types.shape[0],
-        )
-    #     data = Data(
-    #         frac_coords=torch.Tensor(frac_coords),
-    #         atom_types=torch.LongTensor(atom_types),
-    #         lengths=torch.Tensor(lengths).view(1, -1),
-    #         angles=torch.Tensor(angles).view(1, -1),
-    #         edge_index=torch.LongTensor(
-    #             edge_indices.T).contiguous(),  # shape (2, num_edges)
-    #         to_jimages=torch.LongTensor(to_jimages),
-    #         num_atoms=num_atoms,
-    #         num_bonds=edge_indices.shape[0],
-    #         num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
-    # )
-        data.update(lengths=torch.Tensor(lengths).view(1, -1),
-                    angles=torch.Tensor(angles).view(1, -1),
-                    frac_coords = torch.Tensor(frac_coords),
-                    trg_atom_types = torch.LongTensor(atom_types),
-                    trg_edge_index = torch.LongTensor(
-                        edge_indices.T).contiguous(),
-                    to_jimages = torch.LongTensor(to_jimages),
-                    trg_num_atoms = atom_types.shape[0]
-                    )
+            num_atoms_s=f_atom_types.shape[0],
+            num_bonds_s=f_edge_indices.shape[-1],
+            atom_weights_s = torch.Tensor(f_elem_weights).reshape(-1,1),
+            frac_coords_t=torch.Tensor(frac_coords),
+            atom_types_t=torch.LongTensor(atom_types),
+            lengths_t=torch.Tensor(lengths).view(1, -1),
+            angles_t=torch.Tensor(angles).view(1, -1),
+            edge_index_t=torch.LongTensor(
+                edge_indices.T).contiguous(),  # shape (2, num_edges)
+            to_jimages_t=torch.LongTensor(to_jimages),
+            num_atoms_t=num_atoms,
+            num_bonds_t=edge_indices.shape[0],
+    )
         return data
-
-
 
     def __repr__(self) -> str:
         return f"TensorCrystDataset(len: {len(self.cached_data)})"
@@ -330,13 +333,16 @@ def MaterialLoader():
 
     train_loader = DataLoader(train_set,
                               batch_size=cfg.TRAIN.batch_size,
-                              shuffle=True)
+                              shuffle=True,
+                              follow_batch=['atom_types_s', 'atom_types_t'])
     valid_loader = DataLoader(valid_set,
                               batch_size=cfg.TRAIN.batch_size,
-                              shuffle=True)
+                              shuffle=True,
+                              follow_batch=['atom_types_s', 'atom_types_t'])
     test_loader = DataLoader(test_set,
                              batch_size=cfg.TRAIN.batch_size,
-                             shuffle=True)
+                             shuffle=True,
+                             follow_batch = ['atom_types_s', 'atom_types_t'])
     return train_loader, valid_loader, test_loader
 
 
