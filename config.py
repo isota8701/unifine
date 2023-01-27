@@ -20,6 +20,7 @@ __C.WORKERS = 12
 __C.CHECKPOINT_DIR = './checkpoints/'
 __C.CHECKPOINT_NAME = ''
 __C.SCALER_DIR = './data/'
+__C.PROP = "formation_energy_per_atom"
 
 # Test options
 __C.TEST = edict()

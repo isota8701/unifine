@@ -117,7 +117,7 @@ class FormulaNet(nn.Module):
         self.module_layers = nn.ModuleList([RConv() for idx in range(cfg.FORMULA.layers)])
 
     def forward(self, data):
-        x, e, w, b = data.node_features, data.edge_index, data.atom_weights, data.batch
+        x, e, w, b = data.node_features_s, data.edge_index_s, data.atom_weights_s, data.atom_types_s_batch
         x = self.atom_embedding(x)
         for module in self.module_layers:
             x = module(x, e, w)

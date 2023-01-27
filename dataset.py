@@ -162,39 +162,38 @@ def formula_to_graph(string):
 
 def formula_to_dense_graph(string):
     elem, weight = parse_roost(string)
-    alist = []
-    for i, w in enumerate(weight):
-        for _ in range(int(w)):
-            alist.append(elem[i])
-    x = torch.zeros([len(alist),3])
     # build up atom attribute tensor
     self_idx = []
     nbr_idx = []
     atom_types = []
-    for i, _ in enumerate(elem):
+    node_features = []
+    for i, s in enumerate(elem):
         self_idx += [i] * len(elem)
         nbr_idx += list(range(len(elem)))
         atom_types.append(Specie(elem[i]).Z)
-    edge_idx = np.concatenate((self_idx, nbr_idx)).reshape(2,-1)
-    node_features = []
-    for s in elem:
         feat = list(get_node_attributes(s, atom_features='cgcnn'))
         node_features.append(feat)
+    edge_idx = np.concatenate((self_idx, nbr_idx)).reshape(2,-1)
     node_features = np.array(node_features)
+    w_attr = []
+    for i in range(len(self_idx)):
+        w_attr.append(weight[nbr_idx[i]]/(weight[self_idx[i]]+ weight[nbr_idx[i]]))
     elem_weights = np.atleast_2d(weight) / np.sum(weight)
-    # elem_weights = np.ones(len(elem)).reshape(-1,1)
+    w_attr = np.array(w_attr).reshape(-1,1)
     atom_types = np.array(atom_types)
-    return atom_types, node_features, edge_idx, elem_weights
+    return atom_types, node_features, edge_idx, elem_weights #w_attr
 
-def process_one(mp_ids, crystal_array, crystal_string):
+def process_one(mp_ids, crystal_array, crystal_string, props):
     crystal = build_crystal(crystal_array)
     graph_arrays = build_crystal_graph(crystal, 'crystalnn')
     formula_arrays = formula_to_dense_graph(crystal_string)
+    properties = {'prop': np.array(props)}
     result_dict = {
         'mp_ids': mp_ids,
         'graph_arrays': graph_arrays,
-        'formula_arrays':formula_arrays
+        'formula_arrays':formula_arrays,
     }
+    result_dict.update(properties)
     return result_dict
 
 def curate(dataset, num, max_atoms):
@@ -254,6 +253,7 @@ class LoadDataset(torch.utils.data.Dataset):
         print('Load dataset')
         self.path = path
         self.cached_data = []
+        self.prop = cfg.PROP
         random.seed(123)
         # Prepare dataframe(jarvis jdata to dataframe)
         if self.path != None:
@@ -265,7 +265,7 @@ class LoadDataset(torch.utils.data.Dataset):
         datasplit = np.array_split(df, num_workers)
 
         def progress(df):
-            return [process_one(mp_ids, crystal_array, crystal_string) for (mp_ids, crystal_array, crystal_string) in zip(df['id'], tqdm(df['atoms']), df['full_formula'])]
+            return [process_one(mp_ids, crystal_array, crystal_string, props) for (mp_ids, crystal_array, crystal_string, props) in zip(df['id'], tqdm(df['atoms']), df['full_formula'], df[self.prop])]
 
         cached_data = Parallel(n_jobs=num_workers)(delayed(progress)(split) for split in datasplit)
 
@@ -288,6 +288,8 @@ class LoadDataset(torch.utils.data.Dataset):
          to_jimages, num_atoms) = data_dict['graph_arrays']
         (f_atom_types, f_node_features,
          f_edge_indices, f_elem_weights) = data_dict['formula_arrays']
+        # prop = self.scaler.transform(data_dict['prop'])
+        prop = torch.Tensor(data_dict['prop'])
         data = PairData(
             node_features_s = torch.Tensor(f_node_features),
             atom_types_s=torch.LongTensor(f_atom_types),
@@ -305,6 +307,7 @@ class LoadDataset(torch.utils.data.Dataset):
             to_jimages_t=torch.LongTensor(to_jimages),
             num_atoms_t=num_atoms,
             num_bonds_t=edge_indices.shape[0],
+            y = prop.view(1,-1)
     )
         return data
 

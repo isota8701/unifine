@@ -22,3 +22,13 @@ first check cdvae loss for 3d gnn(dimenet encoder)
 and then code contrastive learning and see loss decrease
 between code contrastive learning and property prediction acc for only formula net
 issue) contrastive with hiddens or mu or z check which is best
+
+1.27
+TODO
+constrastive.py implementing
+- need 3 version of formula net to compare
+--issue, roost and gat conflicts because of edge attr define is different
+--i might defined roost in the wrong way, otherwise my result say roost is similar to gat
+- define contrastive loss, infoNCE, barlowtwins, vicreg
+- see if formula net acc increases after pretraining
+- merge the contrastive learning part with vae
