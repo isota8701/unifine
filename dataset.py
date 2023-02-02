@@ -9,6 +9,7 @@ from pymatgen.core.structure import Structure
 from pymatgen.core.lattice import Lattice
 from pymatgen.analysis.graphs import StructureGraph
 from pymatgen.analysis import local_env
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from p_tqdm import p_umap
 from tqdm import tqdm
 from utils import *
@@ -181,7 +182,7 @@ def formula_to_dense_graph(string):
     elem_weights = np.atleast_2d(weight) / np.sum(weight)
     w_attr = np.array(w_attr).reshape(-1,1)
     atom_types = np.array(atom_types)
-    return atom_types, node_features, edge_idx, elem_weights #w_attr
+    return atom_types, node_features, edge_idx, w_attr #w_attr
 
 def process_one(mp_ids, crystal_array, crystal_string, props):
     crystal = build_crystal(crystal_array)

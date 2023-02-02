@@ -7,7 +7,7 @@ cfg = __C
 
 # Dataset name: birds
 __C.DATASET_NAME = 'mp_3d_2020'
-__C.DATA_DIR = './data/'
+__C.DATA_DIR = '../data/'
 __C.NUM_TRAIN = 1000
 __C.NUM_VALID = 50
 __C.NUM_TEST = 50
@@ -19,7 +19,7 @@ __C.RANDOM_SEED = 321
 __C.WORKERS = 12
 __C.CHECKPOINT_DIR = './checkpoints/'
 __C.CHECKPOINT_NAME = ''
-__C.SCALER_DIR = './data/'
+__C.SCALER_DIR = '../data/'
 __C.PROP = "formation_energy_per_atom"
 
 # Test options
@@ -38,11 +38,14 @@ __C.TRAIN.snapshot_interval = 10
 
 __C.GNN = edict()
 __C.GNN.encoder = ''
+__C.GNN.hidden_dim = 256
+__C.GNN.atom_input_dim = 92
 
 __C.FORMULA = edict()
 __C.FORMULA.layers = 4
 __C.FORMULA.atom_input_dim = 92
 __C.FORMULA.hidden_dim = 256
+__C.FORMULA.edge_dim = 256
 __C.FORMULA.output_dim = 1
 __C.FORMULA.n_heads = 4
 __C.FORMULA.encoder = ''
