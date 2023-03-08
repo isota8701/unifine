@@ -138,21 +138,21 @@ class crysVAE(nn.Module):
         used_sigmas_per_atom = self.sigmas[noise_level].repeat_interleave(
             batch.num_atoms_t, dim=0)
 
-        type_noise_level = torch.randint(0, self.type_sigmas.size(0),
-                                         (batch.num_atoms_t.size(0),),
-                                         device=self.device)
-        used_type_sigmas_per_atom = (
-            self.type_sigmas[type_noise_level].repeat_interleave(
-                batch.num_atoms_t, dim=0))
-
-        # add noise to atom types and sample atom types.
-        pred_composition_probs = F.softmax(
-            pred_composition_per_atom.detach(), dim=-1)
-        atom_type_probs = (
-                F.one_hot(batch.atom_types_t - 1, num_classes=MAX_ATOMIC_NUM) +
-                pred_composition_probs * used_type_sigmas_per_atom[:, None])
-        rand_atom_types = torch.multinomial(
-            atom_type_probs, num_samples=1).squeeze(1) + 1
+        # type_noise_level = torch.randint(0, self.type_sigmas.size(0),
+        #                                  (batch.num_atoms_t.size(0),),
+        #                                  device=self.device)
+        # used_type_sigmas_per_atom = (
+        #     self.type_sigmas[type_noise_level].repeat_interleave(
+        #         batch.num_atoms_t, dim=0))
+        #
+        # # add noise to atom types and sample atom types.
+        # pred_composition_probs = F.softmax(
+        #     pred_composition_per_atom.detach(), dim=-1)
+        # atom_type_probs = (
+        #         F.one_hot(batch.atom_types_t - 1, num_classes=MAX_ATOMIC_NUM) +
+        #         pred_composition_probs * used_type_sigmas_per_atom[:, None])
+        # rand_atom_types = torch.multinomial(
+        #     atom_type_probs, num_samples=1).squeeze(1) + 1
 
         # add noise to the cart coords
         cart_noises_per_atom = (
@@ -164,17 +164,17 @@ class crysVAE(nn.Module):
         noisy_frac_coords = cart_to_frac_coords(
             cart_coords, pred_lengths, pred_angles, batch.num_atoms_t)
         h, pred_cart_coord_diff = self.decoder(
-            z, noisy_frac_coords, rand_atom_types, batch.num_atoms_t, pred_lengths, pred_angles)
-        pred_atom_types = self.fc_atom(h)
+            z, noisy_frac_coords, batch.atom_types_t, batch.num_atoms_t, pred_lengths, pred_angles)
+        # pred_atom_types = self.fc_atom(h)
         # compute loss.
-        num_atom_loss = self.num_atom_loss(pred_num_atoms, batch)
+        # num_atom_loss = self.num_atom_loss(pred_num_atoms, batch)
         lattice_loss = self.lattice_loss(pred_lengths_and_angles, batch)
         composition_loss = self.composition_loss(
             pred_composition_per_atom, batch.atom_types_t, batch.atom_types_t_batch)
         coord_loss = self.coord_loss(
             pred_cart_coord_diff, noisy_frac_coords, used_sigmas_per_atom, batch)
-        type_loss = self.type_loss(pred_atom_types, batch.atom_types_t,
-                                   used_type_sigmas_per_atom )
+        # type_loss = self.type_loss(pred_atom_types, batch.atom_types_t,
+        #                            used_type_sigmas_per_atom )
 
         kld_loss = self.kld_loss(mu, log_var)
 
@@ -184,11 +184,11 @@ class crysVAE(nn.Module):
             property_loss = 0.
 
         return {
-            'num_atom_loss': num_atom_loss,
+            # 'num_atom_loss': num_atom_loss,
             'lattice_loss': lattice_loss,
             'composition_loss': composition_loss,
             'coord_loss': coord_loss,
-            'type_loss': type_loss,
+            # 'type_loss': type_loss,
             'kld_loss': kld_loss,
             'property_loss': property_loss,
             'pred_num_atoms': pred_num_atoms,
@@ -196,30 +196,30 @@ class crysVAE(nn.Module):
             'pred_lengths': pred_lengths,
             'pred_angles': pred_angles,
             'pred_cart_coord_diff': pred_cart_coord_diff,
-            'pred_atom_types': pred_atom_types,
+            # 'pred_atom_types': pred_atom_types,
             'pred_composition_per_atom': pred_composition_per_atom,
             'target_frac_coords': batch.frac_coords_t,
             'target_atom_types': batch.atom_types_t,
             'rand_frac_coords': noisy_frac_coords,
-            'rand_atom_types': rand_atom_types,
+            # 'rand_atom_types': rand_atom_types,
             'z': z,
         }
     def compute_stats(self, batch, outputs):
 
-        num_atom_loss = outputs['num_atom_loss']
+        # num_atom_loss = outputs['num_atom_loss']
         lattice_loss = outputs['lattice_loss']
         coord_loss = outputs['coord_loss']
-        type_loss = outputs['type_loss']
+        # type_loss = outputs['type_loss']
         kld_loss = outputs['kld_loss']
         composition_loss = outputs['composition_loss']
         property_loss = outputs['property_loss']
 
 
         loss = (
-            cfg.VAE.cost_natom * num_atom_loss +
+            # cfg.VAE.cost_natom * num_atom_loss +
             cfg.VAE.cost_lattice * lattice_loss +
             cfg.VAE.cost_coord * coord_loss +
-            cfg.VAE.cost_type * type_loss +
+            # cfg.VAE.cost_type * type_loss +
             cfg.VAE.cost_kld * kld_loss +
             cfg.VAE.cost_composition * composition_loss +
             cfg.VAE.cost_property * property_loss
@@ -286,46 +286,46 @@ class crysVAE(nn.Module):
         return kld_loss
 
 
-class latticeDEC(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.decoder = Decoder()
-        self.fc_coord = build_mlp(args.hidden_features, args.hidden_features, 3, 3)
-        self.fc_atom = nn.Linear(512,MAX_ATOMIC_NUM )
-        self.device = args.device
-    def predict_coord(self, n_z, num_atoms):
-        z_per_atom = n_z.repeat_interleave(num_atoms, dim=0)
-        pred_coords_per_atom = self.fc_coord(z_per_atom)
-        return pred_coords_per_atom
-    def forward(self, nz, decode_stats, batch):
-        rep_type = torch.LongTensor().to(self.device)
-        for i in range(len(batch)):
-            b = batch[i]
-            cnt = torch.unique_consecutive(b.target_atom_types, return_counts = True)[1]
-            rep_type = torch.cat((rep_type, cnt))
-        assert rep_type.sum() == batch.target_num_atoms.sum()
-        pseudo_mean_coord = self.predict_coord(nz,rep_type)
-        coord_var = torch.nn.Parameter(torch.Tensor(pseudo_mean_coord.shape)).to(self.device)
-        pseudo_cart_coord = pseudo_mean_coord + coord_var
-        (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles, pred_composition_per_atom) = decode_stats
-        # what atom type, 3D? or predicted atom type or 2D <- use 2D,
-
-        h,  pred_cart_coord= self.decoder(
-        nz, pseudo_cart_coord, batch.atom_types, batch.num_atoms, pred_lengths, pred_angles)
-        pred_atom_types = self.fc_atom(h)
-        return pred_cart_coord, pred_atom_types
+# class latticeDEC(nn.Module):
+#     def __init__(self, args):
+#         super().__init__()
+#         self.decoder = Decoder()
+#         self.fc_coord = build_mlp(args.hidden_features, args.hidden_features, 3, 3)
+#         self.fc_atom = nn.Linear(512,MAX_ATOMIC_NUM )
+#         self.device = args.device
+#     def predict_coord(self, n_z, num_atoms):
+#         z_per_atom = n_z.repeat_interleave(num_atoms, dim=0)
+#         pred_coords_per_atom = self.fc_coord(z_per_atom)
+#         return pred_coords_per_atom
+#     def forward(self, nz, decode_stats, batch):
+#         rep_type = torch.LongTensor().to(self.device)
+#         for i in range(len(batch)):
+#             b = batch[i]
+#             cnt = torch.unique_consecutive(b.target_atom_types, return_counts = True)[1]
+#             rep_type = torch.cat((rep_type, cnt))
+#         assert rep_type.sum() == batch.target_num_atoms.sum()
+#         pseudo_mean_coord = self.predict_coord(nz,rep_type)
+#         coord_var = torch.nn.Parameter(torch.Tensor(pseudo_mean_coord.shape)).to(self.device)
+#         pseudo_cart_coord = pseudo_mean_coord + coord_var
+#         (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles, pred_composition_per_atom) = decode_stats
+#         # what atom type, 3D? or predicted atom type or 2D <- use 2D,
+#
+#         h,  pred_cart_coord= self.decoder(
+#         nz, pseudo_cart_coord, batch.atom_types, batch.num_atoms, pred_lengths, pred_angles)
+#         pred_atom_types = self.fc_atom(h)
+#         return pred_cart_coord, pred_atom_types
 
 
 if __name__ == "__main__":
     torch.manual_seed(cfg.RANDOM_SEED)
-    from dataset import MaterialLoader
+    from pretrain_cl.data import MaterialLoader
     train_loader, valid_loader, test_loader = MaterialLoader()
     model = crysVAE()
     model = model.to(model.device)
     from torch import optim
     import numpy as np
     optimizer = optim.Adam(params= model.parameters(),
-                           lr = cfg.OPTIM.lr)
+                           lr = cfg.TRAIN.lr)
 
     for e in range(cfg.TRAIN.max_epoch):
         loss = []
@@ -333,31 +333,10 @@ if __name__ == "__main__":
             batch.to(model.device)
             outputs = model(batch)
             running_loss = model.compute_stats(batch, outputs)
+            optimizer.zero_grad()
             running_loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
             loss.append(running_loss.item())
             print(f"running loss: {running_loss.item():.3f}")
         if (e+1) % 10 == 0:
             print(f"epoch {e+1}, loss: {np.mean(loss):.3f}")
-            # n_z = n_z.detach()
-            # decode_stat = (v.detach() for v in decode_stat)
-            # pseudo_coord, pred_mean, pred_atom_type = lattDec(n_z, decode_stat,batch)
-            # loss2 = coordLoss(pred_mean, batch)
-            # loss2.backward()
-            # optimizer_dec.step()
-            # optimizer_dec.zero_grad()
-            # print(f"coord loss: {loss2.item()}")
-    # if (e+1) == 100:
-    #     print(f"finished")
-    #     model.eval()
-    #     losses = []
-    #     with torch.no_grad():
-    #         for batch in test_loader:
-    #             batch.to(args.device)
-    #             nz, decode_stat, kld_loss = model(batch)
-    #             loss1 = lattLoss(decode_stat, batch)
-    #             loss1 += kld_loss
-    #             losses.append(loss1.item())
-    #         print(f"{np.mean(losses): .3f}")
-    #         pred_coord, pred_type = lattDec(nz, decode_stat, batch)
