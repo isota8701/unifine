@@ -543,7 +543,7 @@ if __name__ == "__main__":
     parser.add_argument('--output-features', type=int, default=9, help="")
     parser.add_argument('--n-heads', type=int, default=4, help="")
     parser.add_argument('--dataset', type = str, default='mp_3d_2020')
-    parser.add_argument('--num-train', type=int, default=10, help="")
+    parser.add_argument('--num-data', type=int, default=10, help="")
     parser.add_argument('--num-valid', type=int, default=5, help="")
     parser.add_argument('--num-test', type=int, default=5, help="")
     parser.add_argument('--batch-size', type=int, default=2, help="")

@@ -20,7 +20,7 @@ cfg = __C
 __C.DATA_DIR = '../data/'
 __C.FROM_PATH = True
 __C.CUT_DATA = False
-__C.DATASET_NAME = "mp_3d_2020_maxA20_N48840"
+__C.DATASET_NAME = "mp_3d_2020_maxA20_N48840_CUT_1100"
 __C.PROP = "formation_energy_per_atom"
 __C.NUM_TRAIN = 1000
 __C.NUM_VALID = 50
@@ -44,9 +44,9 @@ __C.TEST = edict()
 
 # Training options
 __C.TRAIN = edict()
-__C.TRAIN.max_epoch = 100
+__C.TRAIN.max_epoch = 20
 __C.TRAIN.batch_size = 64
-__C.TRAIN.snapshot_interval =10
+__C.TRAIN.snapshot_interval =1
 __C.TRAIN.lr = 0.001
 __C.TRAIN.patience = 40
 
@@ -55,9 +55,9 @@ __C.EVAL = edict()
 __C.EVAL.dataset = "EVAL_mp_3d_2020_maxA20_N21156_formation_energy_per_atom.csv"
 __C.EVAL.lr_head = 0.001
 __C.EVAL.lr_backbone = 0.001
-__C.EVAL.max_epoch = 10
+__C.EVAL.max_epoch = 20
 __C.EVAL.batch_size = 256
-__C.EVAL.snapshot_interval =10
+__C.EVAL.snapshot_interval = 1
 
 # Modal options
 
@@ -67,7 +67,7 @@ __C.GNN.hidden_dim = 256
 __C.GNN.atom_input_dim = 92
 
 __C.FORMULA = edict()
-__C.FORMULA.layers = 4
+__C.FORMULA.layers = 3
 __C.FORMULA.atom_input_dim = 92
 __C.FORMULA.hidden_dim = 256
 __C.FORMULA.edge_dim = 64

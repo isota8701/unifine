@@ -37,7 +37,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='mp_3d_2020', help="data-chemical")
     parser.add_argument('--target', type=str, default='lattice_mat', help="")
     parser.add_argument('--epochs', type=int, default=50, help="")
-    parser.add_argument('--num-train', type=int, default=3000, help="")
+    parser.add_argument('--num-data', type=int, default=3000, help="")
     parser.add_argument('--num-valid', type=int, default=100, help="")
     parser.add_argument('--num-test', type=int, default=100, help="")
     parser.add_argument('--batch-size', type=int, default=64, help="")
