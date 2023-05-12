@@ -1,0 +1,185 @@
+import pickle
+import numpy as np
+from datetime import datetime
+
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import os
+from gnn_2d import Encoder as source_encoder
+from task import target_solver
+from config import cfg
+from time import time
+
+def save_history(history, filename):
+    with open(filename, 'wb') as f:
+        pickle.dump(history, f, pickle.HIGHEST_PROTOCOL)
+
+
+class Evaluator:
+    def __init__(self, train_loader , valid_loader, test_loader, load_model_path, args):
+        self.train_loader = train_loader
+        self.valid_loader = valid_loader
+        self.test_loader = test_loader
+        self.device = args.device
+        self.source_encoder = source_encoder()
+        self.proj = nn.Sequential(nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim),
+                                  nn.BatchNorm1d(cfg.GNN.hidden_dim),
+                                  nn.ReLU(),
+                                  nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim)).to(self.device)
+        self.target_solver = target_solver()
+        checkpoint = torch.load(load_model_path)
+        if cfg.weights not in ['freeze', 'finetune', 'transfer', 'rand-init', '3d']:
+            assert False, "Unspecified Evaluation Type"
+        if cfg.weights in ['freeze', 'finetune']:
+            self.source_encoder.load_state_dict(checkpoint['source_enc'])
+            self.proj.load_state_dict(checkpoint['proj'])
+        self.backbone = nn.Sequential(self.source_encoder, self.proj)
+        if cfg.weights == '3d':
+            self.backbone = self.target_solver
+        self.head = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.output_dim)
+        self.head.weight.data.normal_(mean=0., std=0.01)
+        self.head.bias.data.zero_()
+        if cfg.weights =='freeze':
+            self.backbone.requires_grad_(False)
+            self.head.requires_grad_(True)
+        param_groups = [dict(params = self.head.parameters(), lr = cfg.EVAL.lr_head)]
+        if cfg.weights in ['finetune', 'rand-init', '3d']:
+            param_groups.append(dict(params = self.backbone.parameters(), lr = cfg.EVAL.lr_backbone))
+        self.optimizer = torch.optim.AdamW(param_groups)
+        self.model = nn.Sequential(self.backbone, self.head).to(self.device)
+        self.min_valid_loss = 1e10
+        self.best_epoch = 0
+        self.criterion = nn.MSELoss()
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, cfg.EVAL.max_epoch)
+
+        self.directory = cfg.checkpoint_dir
+        name_date = datetime.now().strftime("%m%d")
+        self.exp_name = f"evaluate_{args.exp_name}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
+        self.history = {'train': [], 'valid': [], 'test': []}
+        self.history_file = os.path.join(self.directory, 'history_' + self.exp_name + '.pickle')
+        self.mae_loss = nn.L1Loss()
+
+    def train(self):
+        print(f"## Start linear evaluation (weights:{cfg.weights}, target property:{cfg.prop})")
+        start_time = time()
+        for epoch in range(cfg.EVAL.max_epoch):
+            if cfg.weights == 'freeze':
+                self.model.eval()
+            else:
+                self.model.train()
+            train_loss = self.eval_model(self.train_loader, 'train')
+            valid_loss = self.eval_model(self.valid_loader, 'valid')
+            self.history['train'].append(train_loss/len(self.train_loader.dataset))
+            self.history['valid'].append(valid_loss/len(self.valid_loader.dataset))
+            self.scheduler.step()
+            if valid_loss < self.min_valid_loss:
+                torch.save(self.model.state_dict(), os.path.join(self.directory, self.exp_name))
+                self.min_valid_loss = valid_loss
+                self.best_epoch = epoch
+                save_history(self.history, self.history_file)
+            if (epoch+1) % cfg.EVAL.snapshot_interval ==0:
+                print(f'Epoch {epoch + 1}/{cfg.EVAL.max_epoch}', end='  ')
+                print(f'Train loss :{train_loss/len(self.train_loader.dataset):.4f}', end='  ')
+                print(f'Valid loss:{valid_loss/len(self.valid_loader.dataset):.4f}', end='  ')
+                print(f'Interval time elapsed:{(time() - start_time) / 3600: .4f}')
+        print("Training done")
+        print(f"Best epoch :{self.best_epoch + 1}", end='  ')
+        print(f'Best Valid loss:{self.min_valid_loss/len(self.valid_loader.dataset): .4f}')
+        end_time = time()
+        if epoch + 1 == cfg.EVAL.max_epoch:
+            self.model.load_state_dict(torch.load(os.path.join(self.directory, self.exp_name)))
+            test_loss = self.eval_model(self.test_loader, 'test')
+            self.history['test'].append(test_loss/len(self.test_loader.dataset))
+            save_history(self.history, self.history_file)
+            print(f'Test Loss:{test_loss/len(self.test_loader.dataset): .4f}')
+
+        print(f"Total time elapsed:{(end_time - start_time) / 3600: .4f}")
+        r2, mae, rmse = self.print_result(self.test_loader)
+        self.history['test'].append({'r2':r2, 'mae':mae, 'rmse':rmse})
+        save_history(self.history, self.history_file)
+
+    def eval_model(self, loader, split):
+        if split == 'train':
+            running_loss =  0.
+            for batch in loader:
+                if cfg.weights == '3d':
+                    gg, fg, prop = batch
+                    g, lg =gg[0].to(self.device), gg[1].to(self.device)
+                    input_g = (g, lg)
+                else:
+                    fg, prop = batch
+                    fg = fg.to(self.device)
+                    input_g = fg
+                prop = prop.to(self.device)
+                out = self.model(input_g)
+                loss = self.criterion(out, prop)
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                running_loss+=loss.item()*fg.batch_size
+            return running_loss
+        else:
+            self.model.eval()
+            running_loss = 0.
+            for batch in loader:
+                if cfg.weights == '3d':
+                    gg, fg, prop = batch
+                    g, lg = gg[0].to(self.device), gg[1].to(self.device)
+                    input_g = (g, lg)
+                else:
+                    fg, prop = batch
+                    fg = fg.to(self.device)
+                    input_g = fg
+                prop = prop.to(self.device)
+                with torch.no_grad():
+                    out = self.model(input_g)
+                    loss = self.criterion(out, prop)
+                    running_loss+=loss.item()*fg.batch_size
+            return running_loss
+
+    def print_result(self, loader):
+        self.model.eval()
+        outputs = []
+        labels =  []
+        running_mae = 0.
+        running_mse = 0.
+        for batch in loader:
+            if cfg.weights == '3d':
+                gg, fg, prop = batch
+                g, lg = gg[0].to(self.device), gg[1].to(self.device)
+                input_g = (g, lg)
+
+            else:
+                fg, prop = batch
+                fg = fg.to(self.device)
+                input_g = fg
+            prop = prop.to(self.device)
+            with torch.no_grad():
+                out = self.model(input_g)
+                mae = self.mae_loss(out, prop)
+                mse = self.criterion(out, prop)
+                running_mae+=mae.item()*fg.batch_size
+                running_mse+=mse.item()*fg.batch_size
+                outputs.append(out)
+                labels.append(prop)
+        MAE = running_mae / len(loader.dataset)
+        MSE = running_mse / len(loader.dataset)
+        RMSE = MSE**0.5
+        outputs = torch.cat(outputs)
+        labels = torch.cat(labels)
+        r2 = self.r2_loss(outputs, labels)
+        print("Model Performance Metrics:")
+        print(f"R2 Score: {r2:.4f} ")
+        print(f"MAE: {MAE:.4f}")
+        print(f"RMSE: {RMSE:.4f}")
+        return r2, MAE, RMSE
+
+    def r2_loss(self, out, target):
+        target_mean = torch.mean(target)
+        ss_tot = torch.sum((target - target_mean).pow(2))
+        ss_res = torch.sum((target - out).pow(2))
+        r2 = 1 - ss_res / ss_tot
+        return r2.item()
+

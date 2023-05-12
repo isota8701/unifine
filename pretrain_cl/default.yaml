@@ -1,0 +1,14 @@
+DATA_DIR: "../data/"
+FROM_PATH: True
+CUT_DATA: False
+DATASET_NAME: "mp_3d_2020_maxA30_N65808"
+PROP: "formation_energy_per_atom"
+WEIGHTS: "finetune"
+DEVICE: "cuda:1"
+
+TRAIN:
+  max_epoch: 100
+  batch_size: 128
+
+
+
