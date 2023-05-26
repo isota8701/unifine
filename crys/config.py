@@ -15,8 +15,8 @@ __C.cut_data = False
 __C.dataset = "materials-project_max_atoms_50_dsjoint_len_72902"
 # __C.dataset = "materials-project_max_atoms_20_len_3000"
 __C.evalset = "materials-project_max_atoms_50_dsjoint_len_10000"
-__C.prop = "formation_energy_per_atom"
-__C.model_path = "test_pretrain_0511_materials-project_3000"
+__C.prop = "formation_energy_per_atom"  # 'e_above_hull'
+__C.model_path = "crys_nsvae_cycle_pretrain_0525_materials-project_72902"
 __C.weights = "finetune"
 __C.cut_num = 10000
 __C.train_ratio = 0.9
@@ -41,7 +41,7 @@ __C.TEST = edict()
 __C.TRAIN = edict()
 __C.TRAIN.max_epoch = 200
 __C.TRAIN.batch_size = 32
-__C.TRAIN.snapshot_interval =20
+__C.TRAIN.snapshot_interval =10
 __C.TRAIN.lr = 0.001
 __C.TRAIN.patience = 50
 
@@ -51,8 +51,8 @@ __C.EVAL.dataset = ""
 __C.EVAL.lr_head = 0.01
 __C.EVAL.lr_backbone = 0.001
 __C.EVAL.max_epoch = 100
-__C.EVAL.batch_size = 256
-__C.EVAL.snapshot_interval = 20
+__C.EVAL.batch_size = 128
+__C.EVAL.snapshot_interval = 10
 
 # Modal options
 

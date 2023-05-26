@@ -58,13 +58,26 @@ class Encoder(nn.Module):
         self.hidden_features = hidden_dim
         self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
         self.module_layers = nn.ModuleList([Roost() for _ in range(roost_layers)])
+        self.mu_fc= nn.Linear(hidden_dim, hidden_dim)
+        self.var_fc= nn.Linear(hidden_dim, hidden_dim)
         self.pooling = AvgPooling()
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
 
     def forward(self, fg):
         fg = fg.local_var()
         # initial node features: atom feature network...
         x = fg.ndata.pop("atom_features")
         x = self.atom_embedding(x)
+        #################################################
+        # noise inject vs repara
+        x+= 0.001*torch.randn_like(x)
+        # mu, logvar = self.mu_fc(x), self.var_fc(x)
+        # x = self.reparameterize(mu, logvar)
+        #################################################
         # gated GCN updates: update node, edge features
         for module in self.module_layers:
             x = module(fg, x)

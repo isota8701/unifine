@@ -50,8 +50,11 @@ class RBFExpansion(nn.Module):
 
 def refine_materials_project(df, max_atoms):
     df = df[df['atoms'].apply(lambda x: len(x['elements']) < max_atoms)]
-    d1 = df[df['full_formula'].duplicated(keep=False) == False]
-    d2 = df[df['full_formula'].duplicated(keep=False)]
+    d = df.copy()
+    d.loc[:, 'bulk_modulus'] = d['elasticity'].apply(lambda x: x['G_Voigt'] if x else None)
+    d.loc[:, 'shear_modulus'] = d['elasticity'].apply(lambda x: x['K_Voigt'] if x else None)
+    d1 = d[d['full_formula'].duplicated(keep=False) == False]
+    d2 = d[d['full_formula'].duplicated(keep=False)]
     min_fe = d2.groupby('full_formula').min('formation_energy_per_atom')['formation_energy_per_atom'].values
     d2 = d2[d2['formation_energy_per_atom'].apply(lambda x: any(x == min_fe))]
     df_ = pd.concat([d1, d2])
@@ -116,14 +119,17 @@ def curate_jdata(dataset_name, max_atoms, cut_data):
         assert len(df) > num, "less than cut length"
         df = df.iloc[:num]
     print(f"Refined dataset shape {df.shape}")
-    # df_joint_test = df.iloc[:10000, :].reset_index(drop = True)
-    # df_joint_ptrain = df.iloc[10000:,:].reset_index(drop=True)
-    # new_name= f"materials-project_max_atoms_{max_atoms}_dsjoint_len_{len(df_joint_test)}"
-    # df_joint_test.to_pickle(cfg.data_dir + f"{new_name}.pkl")
-    # new_name= f"materials-project_max_atoms_{max_atoms}_dsjoint_len_{len(df_joint_ptrain)}"
-    # df_joint_ptrain.to_pickle(cfg.data_dir + f"{new_name}.pkl")
-    new_name+= f"_max_atoms_{max_atoms}_len_{len(df)}"
-    df.to_pickle(cfg.data_dir + f"{new_name}.pkl")
+    # mp
+    df_joint_test = df.iloc[:10000, :].reset_index(drop = True)
+    df_joint_ptrain = df.iloc[10000:,:].reset_index(drop=True)
+    new_name= f"materials-project_max_atoms_{max_atoms}_dsjoint_len_{len(df_joint_test)}"
+    df_joint_test.to_pickle(cfg.data_dir + f"{new_name}.pkl")
+    new_name= f"materials-project_max_atoms_{max_atoms}_dsjoint_len_{len(df_joint_ptrain)}"
+    df_joint_ptrain.to_pickle(cfg.data_dir + f"{new_name}.pkl")
+
+    #dft
+    # new_name+= f"_max_atoms_{max_atoms}_len_{len(df)}"
+    # df.to_pickle(cfg.data_dir + f"{new_name}.pkl")
     return df
 
 def curate_eval():
@@ -209,9 +215,9 @@ def plot_history(filename):
 
 
 if __name__ == "__main__":
-    # cfg.dataset = 'dft_2d'
-    # curate_jdata(cfg.dataset, cfg.max_atoms, cfg.cut_data)
+    cfg.dataset = 'mp_3d_2020'
+    curate_jdata(cfg.dataset, cfg.max_atoms, cfg.cut_data)
     # curate_eval()
-    check_history('checkpoints/history_test_pretrain_0511_materials-project_3000.pickle')
+    # check_history('checkpoints/history_test_pretrain_0511_materials-project_3000.pickle')
     # check_history('checkpoints/history_evaluate_crysVAE_nem_pretrain_0509_materials-project_77153_0511_finetune_formation_10000.pickle')
     # plot_history('checkpoints/history_evaluate_crysVAE_nem_pretrain_0509_materials-project_77153_0511_finetune_formation_10000.pickle')

@@ -6,7 +6,7 @@ from utils import RBFExpansion
 import torch.nn.functional as F
 from torch import nn
 from config import cfg
-
+from gnn_2d import Roost
 
 class EGGConv(nn.Module):
 
@@ -43,7 +43,6 @@ class EGGConv(nn.Module):
         g.update_all(fn.copy_e("sigma", "m"), fn.sum("m", "sum_sigma"))
         g.ndata["h"] = g.ndata["sum_sigma_h"] / (g.ndata["sum_sigma"] + 1e-6)
         x = self.src_update(node_feats) + g.ndata.pop("h")
-
         return x, m
 
 
@@ -112,6 +111,8 @@ class Encoder(nn.Module):
 
         self.hidden_features = hidden_dim
         self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
+        self.mu_fc = nn.Linear(hidden_dim,hidden_dim)
+        self.var_fc = nn.Linear(hidden_dim,hidden_dim)
         self.edge_embedding = nn.Sequential(
             RBFExpansion(vmin=0, vmax=8, bins=edge_input_dim),
             MLPLayer(edge_input_dim, embedding_dim),
@@ -125,7 +126,10 @@ class Encoder(nn.Module):
         self.module_layers = nn.ModuleList([ALIGNNConv(line_graph=True) for _ in range(alignn_layers)]
                                            + [ALIGNNConv(line_graph=False) for _ in range(gcn_layers)])
         self.pooling = AvgPooling()
-
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
     def forward(self, gg):
         g = gg[0]
         lg = gg[1]
@@ -136,9 +140,15 @@ class Encoder(nn.Module):
         x = g.ndata.pop("atom_features")
         x = self.atom_embedding(x)
 
+        #################################################
+        # noise inject vs reparametirization
+        x+=0.001*torch.randn_like(x)
+        # mu, logvar = self.mu_fc(x), self.var_fc(x)
+        # x = self.reparameterize(mu, logvar)
+        #################################################
+
         # initial bond features
         y = self.edge_embedding(g.edata['d'])
-
         # angle features (fixed)
         z = self.angle_embedding(lg.edata.pop("h"))
         # gated GCN updates: update node, edge features
@@ -148,4 +158,129 @@ class Encoder(nn.Module):
         return x, xr
 
 
+class hybridEncoder(nn.Module):
+    def __init__(self,
+                 flag:str = 'pretrain',
+                 atom_input_dim: int = cfg.GNN.atom_input_dim,
+                 edge_input_dim: int = cfg.GNN.edge_input_dim,
+                 triplet_input_dim: int = cfg.GNN.triplet_input_dim,
+                 embedding_dim: int = cfg.GNN.embedding_dim,
+                 hidden_dim: int = cfg.GNN.hidden_dim,
+                 alignn_layers: int = cfg.GNN.alignn_layers,
+                 gcn_layers: int = cfg.GNN.gcn_layers,
+                 roost_layers: int = cfg.GNN.roost_layers):
 
+
+        """Initialize class with number of input features, conv layers."""
+        super().__init__()
+        self.flag = flag
+        self.hidden_features = hidden_dim
+        self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
+        self.edge_embedding = nn.Sequential(
+            RBFExpansion(vmin=0, vmax=8, bins=edge_input_dim),
+            MLPLayer(edge_input_dim, embedding_dim),
+            MLPLayer(embedding_dim, hidden_dim),
+        )
+        self.angle_embedding = nn.Sequential(
+            RBFExpansion(vmin=-1, vmax=1.0, bins=triplet_input_dim),
+            MLPLayer(triplet_input_dim, embedding_dim),
+            MLPLayer(embedding_dim, hidden_dim),
+        )
+        self.projection = MLPLayer(hidden_dim, hidden_dim)
+
+        self.g_module_layers = nn.ModuleList([ALIGNNConv(line_graph=True) for _ in range(alignn_layers)]
+                                           + [ALIGNNConv(line_graph=False) for _ in range(gcn_layers)])
+
+        self.b_module_layers = nn.ModuleList([Roost() for _ in range(roost_layers)])
+        self.f_module_layers = nn.ModuleList([Roost() for _ in range(roost_layers)])
+
+        self.pooling = AvgPooling()
+
+    def get_indices(self, num_atoms, replace_ratio: float = 0.2):
+        id = 0
+        ids = []
+        for num_atom in num_atoms:
+            i = torch.randint(id, id + num_atom, (int(num_atom * replace_ratio),))
+            ids.append(i)
+            id += num_atom
+        return torch.cat(ids)
+
+    def pretrain(self, gg, fg, gdata):
+        fg = fg.local_var()
+        g = gg[0]
+        lg = gg[1]
+        g = g.local_var()
+        lg = lg.local_var()
+        x = g.ndata.pop("atom_features")
+        x = self.atom_embedding(x)
+        # very small noise injection (even when eval) or reparameterization trick
+        # x+=0.001*torch.randn_like(x)
+        y = self.edge_embedding(g.edata['d'])
+        z = self.angle_embedding(lg.edata.pop("h"))
+        xs = x.clone()
+        xt = x.clone()
+        num_atoms = gdata.num_atoms
+        loss = []
+        for fgnn, ggnn in zip(self.f_module_layers, self.g_module_layers):
+            xs = fgnn(fg, xs)
+            xt, y, z = ggnn(g, lg, xt, y, z)
+            xh = xs.clone()
+            inx = self.get_indices(num_atoms, replace_ratio=0.5)
+            xh[inx, :] = xt[inx, :]
+            xs = self.projection(xh)
+            hybrid_loss = F.mse_loss(xs, xt)
+            loss.append(hybrid_loss)
+        return xs, xt, loss
+
+    def eval(self, fg):
+        fg = fg.local_var()
+        # initial node features: atom feature network...
+        x = fg.ndata.pop("atom_features")
+        x = self.atom_embedding(x)
+        # gated GCN updates: update node, edge features
+        for module in self.f_module_layers:
+            x = module(fg, x)
+        x = self.pooling(fg, x)
+        return x
+    def forward(self, gg, fg, gdata):
+        if self.flag == 'pretrain':
+            xs, xt, loss = self.pretrain(gg,fg,gdata)
+            return xs, xt, loss
+        else:
+            x = self.eval(fg)
+            return x
+
+
+'''
+self.ggnn_layers
+
+self.fgnn_layers
+
+xs = x.clone()
+xt = x.clone()
+
+for base in self.base_layers:
+    xs = base(fg,xs)
+xs = repara
+
+
+for ggnn, fgnn in zip(self.ggnn_layers, self.fgnn_layers):
+    xs = fgnn(fg, xs)
+    xt = ggnn(g,lg, xt, y, z)
+    
+    xh = xs.clone()
+    xh[ind,:] = xt[ind,:]
+    xs = self.proj(xh)
+    hybrid_loss = F.mse_loss(xs, xt)
+    loss.append(hybrid_loss)
+return xs, xt, loss
+
+'''
+'''
+x = self.atom_embedding(x)
+x += torch.randn(x)
+
+mlp mixer style
+
+
+'''

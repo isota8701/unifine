@@ -305,14 +305,14 @@ def EvalLoader(dataset = cfg.evalset):
     test_set = data_list[data.num_train+data.num_valid:]
 
     train_loader = DataLoader(train_set,
-                              batch_size=cfg.TRAIN.batch_size*4,
+                              batch_size=cfg.EVAL.batch_size,
                               shuffle=True,
                               collate_fn=collate_fn)
     valid_loader = DataLoader(valid_set,
-                              batch_size=cfg.TRAIN.batch_size*4,
+                              batch_size=cfg.EVAL.batch_size,
                               collate_fn=collate_fn)
     test_loader = DataLoader(test_set,
-                             batch_size=cfg.TRAIN.batch_size*4,
+                             batch_size=cfg.EVAL.batch_size,
                              collate_fn=collate_fn)
     return train_loader, valid_loader, test_loader
 

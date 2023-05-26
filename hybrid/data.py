@@ -44,7 +44,9 @@ def json_dict_to_graph(dict, cutoff, max_neighbors, pbc=False):
     gdict = {'lattice': lattice,
              'lscaled_lattice': lscaled_lattice,
              'atomic_nums':atomic_nums,
-             'num_atoms':num_atoms}
+             'num_atoms':num_atoms,
+             'frac_coord': mol.get_positions()}
+
     return g, lg, gdict
 
 

@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 import os
 from gnn_2d import Encoder as source_encoder
-from distill import target_solver
+from cdvae import target_solver
 from config import cfg
 from time import time
 

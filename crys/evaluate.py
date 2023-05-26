@@ -7,9 +7,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import os
-from task import crysCL as crysPretrain
+from task import crysDnoise as crysPretrain
 from config import cfg
 from time import time
+from dgl.nn.pytorch.glob import AvgPooling
 
 def save_history(history, filename):
     with open(filename, 'wb') as f:
@@ -27,23 +28,53 @@ class Evaluator:
             assert False, "Unspecified Evaluation Type"
         if cfg.weights in ['freeze', 'finetune', 'supervised']:
             trained_model.load_state_dict(torch.load(load_model_path))
+        self.pooling = AvgPooling()
+        # base & target vae
         self.backbone = nn.Sequential(trained_model.source_encoder, trained_model.proj)
+
+        # source vae
+        # self.source_enc = trained_model.source_encoder
+        # self.mu_fc, self.sigma_fc = trained_model.mu_fc, trained_model.sigma_fc
+        # self.proj = trained_model.proj
+        # self.backbone = nn.ModuleList([self.source_enc,
+        #                                self.mu_fc,
+        #                                self.sigma_fc,
+        #                                self.proj])
+
+        # hybrid encoder
+        # self.backbone = trained_model.hybrid_encoder(flag='eval')
+
         if cfg.weights == '3d':
             self.backbone = trained_model.target_encoder
         elif cfg.weights == 'supervised':
             self.backbone = trained_model.source_encoder
 
+        ###################################
+        # base
         self.head = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.output_dim)
         self.head.weight.data.normal_(mean=0., std=0.01)
         self.head.bias.data.zero_()
-        if cfg.weights =='freeze':
+        if (cfg.weights =='freeze'):
             self.backbone.requires_grad_(False)
             self.head.requires_grad_(True)
+
+        # if y1 is trained
+        # self.head = trained_model.yprop_fc
+        ###################################
+
         param_groups = [dict(params = self.head.parameters(), lr = cfg.EVAL.lr_head)]
-        if cfg.weights in ['finetune', 'rand-init', '3d', 'supervised']:
+        if cfg.weights in ['finetune', 'rand-init', 'supervised', '3d']:
             param_groups.append(dict(params = self.backbone.parameters(), lr = cfg.EVAL.lr_backbone))
         self.optimizer = torch.optim.AdamW(param_groups)
+
+        # base
         self.model = nn.Sequential(self.backbone, self.head).to(self.device)
+
+        # hybrid cycle & node level & distill
+        # self.model = nn.ModuleList([self.backbone.to(self.device),
+        #                             self.head.to(self.device)])
+
+
         self.min_valid_loss = 1e10
         self.best_epoch = 0
         self.criterion = nn.MSELoss()
@@ -108,7 +139,20 @@ class Evaluator:
                     fg = fg.to(self.device)
                     input_g = fg
                 prop = prop.to(self.device)
+
+                # seq
                 out = self.model(input_g)
+
+                # souce vae
+                # zs = self.source_enc(input_g)
+                # mu, logvar = self.mu_fc(zs), self.sigma_fc(zs)
+                # std = torch.exp(0.5 * logvar)
+                # eps = torch.randn_like(std)
+                # zs = eps * std + mu
+                # zs = self.proj(zs)
+                # out = self.pooling(fg, zs)
+                # out = self.head(out)
+
                 loss = self.criterion(out, prop)
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -129,7 +173,20 @@ class Evaluator:
                     input_g = fg
                 prop = prop.to(self.device)
                 with torch.no_grad():
+
+                    # seq
                     out = self.model(input_g)
+
+                    # souce vae
+                    # zs = self.source_enc(input_g)
+                    # mu, logvar = self.mu_fc(zs), self.sigma_fc(zs)
+                    # std = torch.exp(0.5 * logvar)
+                    # eps = torch.randn_like(std)
+                    # zs = eps * std + mu
+                    # zs = self.proj(zs)
+                    # out = self.pooling(fg, zs)
+                    # out = self.head(out)
+
                     loss = self.criterion(out, prop)
                     running_loss+=loss.item()*fg.batch_size
             return running_loss
@@ -152,7 +209,21 @@ class Evaluator:
                 input_g = fg
             prop = prop.to(self.device)
             with torch.no_grad():
+
+                # seq
                 out = self.model(input_g)
+
+                # souce vae
+                # zs = self.source_enc(input_g)
+                # mu, logvar = self.mu_fc(zs), self.sigma_fc(zs)
+                # std = torch.exp(0.5 * logvar)
+                # eps = torch.randn_like(std)
+                # zs = eps * std + mu
+                # zs = self.proj(zs)
+                # out = self.pooling(fg, zs)
+                # out = self.head(out)
+
+
                 mae = self.mae_loss(out, prop)
                 mse = self.criterion(out, prop)
                 running_mae+=mae.item()*fg.batch_size

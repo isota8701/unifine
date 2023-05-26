@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 from sklearn.metrics import r2_score
-from task import crysCL as crysPretrain
+from task import crysDnoise as crysPretrain
 from config import cfg
 
 def save_history(history, filename):

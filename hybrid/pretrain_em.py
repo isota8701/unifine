@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 from sklearn.metrics import r2_score
-from distill import target_solver
+from cdvae import target_solver
 from gnn_2d import Encoder as source_encoder
 from config import cfg
 

@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import os
-from distill import crysCL, crysCycle, crysVAE, crysVQVAE, crysHyrbid
+from cdvae import crysDVAE
 from config import cfg
 from time import time
 
@@ -22,7 +22,7 @@ class Evaluator:
         self.valid_loader = valid_loader
         self.test_loader = test_loader
         self.device = args.device
-        trained_model = crysHyrbid()
+        trained_model = crysDVAE()
         if cfg.weights not in ['freeze', 'finetune', 'transfer', 'rand-init', '3d']:
             assert False, "Unspecified Evaluation Type"
         if cfg.weights in ['freeze', 'finetune']:

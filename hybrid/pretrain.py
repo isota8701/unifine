@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 from sklearn.metrics import r2_score
-from distill import crysCL, crysCycle, crysVAE, crysVQVAE, crysHyrbid
+from cdvae import crysDVAE
 from config import cfg
 
 def save_history(history, filename):
@@ -46,7 +46,7 @@ class preTrainer:
         self.valid_loader = valid_loader
         self.test_loader = test_loader
         self.device = args.device
-        self.model = crysHyrbid().to(self.device)
+        self.model = crysDVAE().to(self.device)
         self.optim = optim.AdamW(params=self.model.parameters(),
                                  lr=cfg.TRAIN.lr)
         self.schedular = optim.lr_scheduler.CosineAnnealingLR(self.optim, cfg.TRAIN.max_epoch)
