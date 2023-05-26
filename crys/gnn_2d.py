@@ -57,6 +57,7 @@ class Encoder(nn.Module):
         super().__init__()
         self.hidden_features = hidden_dim
         self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
+        self.base_modules = nn.ModuleList([Roost() for _ in range(roost_layers-3)])
         self.module_layers = nn.ModuleList([Roost() for _ in range(roost_layers)])
         self.mu_fc= nn.Linear(hidden_dim, hidden_dim)
         self.var_fc= nn.Linear(hidden_dim, hidden_dim)
@@ -80,10 +81,12 @@ class Encoder(nn.Module):
         #################################################
         # noise inject vs repara
         # x+= 0.001*torch.randn_like(x)
-        mu, logvar = self.mu_fc(x), self.var_fc(x)
-        x = self.reparameterize(mu, logvar)
         #################################################
         # gated GCN updates: update node, edge features
+        for module in self.base_modules:
+            x = module(fg, x)
+        mu, logvar = self.mu_fc(x), self.var_fc(x)
+        x = self.reparameterize(mu, logvar)
         for module in self.module_layers:
             x = module(fg, x)
         xr = self.pooling(fg, x)
