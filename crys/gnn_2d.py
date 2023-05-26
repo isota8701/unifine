@@ -67,6 +67,11 @@ class Encoder(nn.Module):
         eps = torch.randn_like(std)
         return eps * std + mu
 
+    def kld_loss(self, mu, log_var):
+        kld_loss = torch.mean(
+            -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
+        return kld_loss
+
     def forward(self, fg):
         fg = fg.local_var()
         # initial node features: atom feature network...
@@ -74,12 +79,13 @@ class Encoder(nn.Module):
         x = self.atom_embedding(x)
         #################################################
         # noise inject vs repara
-        x+= 0.001*torch.randn_like(x)
-        # mu, logvar = self.mu_fc(x), self.var_fc(x)
-        # x = self.reparameterize(mu, logvar)
+        # x+= 0.001*torch.randn_like(x)
+        mu, logvar = self.mu_fc(x), self.var_fc(x)
+        x = self.reparameterize(mu, logvar)
         #################################################
         # gated GCN updates: update node, edge features
         for module in self.module_layers:
             x = module(fg, x)
         xr = self.pooling(fg, x)
-        return xr
+        kld_loss = self.kld_loss(mu, logvar)
+        return xr, kld_loss

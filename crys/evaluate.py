@@ -30,19 +30,11 @@ class Evaluator:
             trained_model.load_state_dict(torch.load(load_model_path))
         self.pooling = AvgPooling()
         # base & target vae
-        self.backbone = nn.Sequential(trained_model.source_encoder, trained_model.proj)
+        self.source_enc = trained_model.source_encoder
+        self.proj = trained_model.proj
+        self.backbone = nn.ModuleList([self.source_enc,
+                                       self.proj])
 
-        # source vae
-        # self.source_enc = trained_model.source_encoder
-        # self.mu_fc, self.sigma_fc = trained_model.mu_fc, trained_model.sigma_fc
-        # self.proj = trained_model.proj
-        # self.backbone = nn.ModuleList([self.source_enc,
-        #                                self.mu_fc,
-        #                                self.sigma_fc,
-        #                                self.proj])
-
-        # hybrid encoder
-        # self.backbone = trained_model.hybrid_encoder(flag='eval')
 
         if cfg.weights == '3d':
             self.backbone = trained_model.target_encoder
@@ -68,11 +60,10 @@ class Evaluator:
         self.optimizer = torch.optim.AdamW(param_groups)
 
         # base
-        self.model = nn.Sequential(self.backbone, self.head).to(self.device)
+        # self.model = nn.Sequential(self.backbone, self.head).to(self.device)
 
-        # hybrid cycle & node level & distill
-        # self.model = nn.ModuleList([self.backbone.to(self.device),
-        #                             self.head.to(self.device)])
+        self.model = nn.ModuleList([self.backbone.to(self.device),
+                                    self.head.to(self.device)])
 
 
         self.min_valid_loss = 1e10
@@ -140,20 +131,12 @@ class Evaluator:
                     input_g = fg
                 prop = prop.to(self.device)
 
-                # seq
-                out = self.model(input_g)
-
-                # souce vae
-                # zs = self.source_enc(input_g)
-                # mu, logvar = self.mu_fc(zs), self.sigma_fc(zs)
-                # std = torch.exp(0.5 * logvar)
-                # eps = torch.randn_like(std)
-                # zs = eps * std + mu
-                # zs = self.proj(zs)
-                # out = self.pooling(fg, zs)
-                # out = self.head(out)
-
+                z1, kld_loss = self.source_enc(input_g)
+                out = self.proj(z1)
+                out = self.head(out)
                 loss = self.criterion(out, prop)
+                loss+=kld_loss
+
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -174,20 +157,12 @@ class Evaluator:
                 prop = prop.to(self.device)
                 with torch.no_grad():
 
-                    # seq
-                    out = self.model(input_g)
-
-                    # souce vae
-                    # zs = self.source_enc(input_g)
-                    # mu, logvar = self.mu_fc(zs), self.sigma_fc(zs)
-                    # std = torch.exp(0.5 * logvar)
-                    # eps = torch.randn_like(std)
-                    # zs = eps * std + mu
-                    # zs = self.proj(zs)
-                    # out = self.pooling(fg, zs)
-                    # out = self.head(out)
-
+                    z1, kld_loss = self.source_enc(input_g)
+                    out = self.proj(z1)
+                    out = self.head(out)
                     loss = self.criterion(out, prop)
+                    loss+=kld_loss
+
                     running_loss+=loss.item()*fg.batch_size
             return running_loss
 
@@ -210,19 +185,9 @@ class Evaluator:
             prop = prop.to(self.device)
             with torch.no_grad():
 
-                # seq
-                out = self.model(input_g)
-
-                # souce vae
-                # zs = self.source_enc(input_g)
-                # mu, logvar = self.mu_fc(zs), self.sigma_fc(zs)
-                # std = torch.exp(0.5 * logvar)
-                # eps = torch.randn_like(std)
-                # zs = eps * std + mu
-                # zs = self.proj(zs)
-                # out = self.pooling(fg, zs)
-                # out = self.head(out)
-
+                z1, kld_loss = self.source_enc(input_g)
+                out = self.proj(z1)
+                out = self.head(out)
 
                 mae = self.mae_loss(out, prop)
                 mse = self.criterion(out, prop)

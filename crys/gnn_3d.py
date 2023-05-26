@@ -130,6 +130,12 @@ class Encoder(nn.Module):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return eps * std + mu
+
+    def kld_loss(self, mu, log_var):
+        kld_loss = torch.mean(
+            -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
+        return kld_loss
+
     def forward(self, gg):
         g = gg[0]
         lg = gg[1]
@@ -142,9 +148,9 @@ class Encoder(nn.Module):
 
         #################################################
         # noise inject vs reparametirization
-        x+=0.001*torch.randn_like(x)
-        # mu, logvar = self.mu_fc(x), self.var_fc(x)
-        # x = self.reparameterize(mu, logvar)
+        # x+=0.001*torch.randn_like(x)
+        mu, logvar = self.mu_fc(x), self.var_fc(x)
+        x = self.reparameterize(mu, logvar)
         #################################################
 
         # initial bond features
@@ -155,7 +161,8 @@ class Encoder(nn.Module):
         for module in self.module_layers:
             x, y, z = module(g, lg, x, y, z)
         xr = self.pooling(g,x)
-        return x, xr
+        kld_loss = self.kld_loss(mu, logvar)
+        return x, xr, kld_loss
 
 
 class hybridEncoder(nn.Module):
