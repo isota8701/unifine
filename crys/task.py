@@ -35,19 +35,19 @@ class crysDnoise(nn.Module):
 
 
     def forward(self, gg, fg, gprop, yprop):
-        z1, kl1= self.source_encoder(fg)
-        zn, z2, kl2 = self.target_encoder(gg)
+        z1, kl = self.source_encoder(fg)
+        zn, z2 = self.target_encoder(gg)
 
         # crys_noise_cycle
-        loss_p = F.mse_loss(self.proj(z1), z2)
-        loss_i = F.mse_loss(z1, self.invp(z2))
-        loss_c = F.mse_loss(self.invp(self.proj(z1)), z1)
-        cycle_loss = loss_p + loss_i + loss_c
+        # loss_p = F.mse_loss(self.proj(z1), z2)
+        # loss_i = F.mse_loss(z1, self.invp(z2))
+        # loss_c = F.mse_loss(self.invp(self.proj(z1)), z1)
+        # cycle_loss = loss_p + loss_i + loss_c
 
-        kld_loss = 0.5*(kl1+kl2)
+        kld_loss = kl
 
         # crys_noise_cos
-        # cos_loss = -(self.cos(self.proj(z1), z2).mean())
+        cos_loss = -(self.cos(self.proj(z1), z2).mean())
 
         pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
         latt_loss = self.lattice_loss(pred_latt, gprop)
@@ -56,13 +56,13 @@ class crysDnoise(nn.Module):
         pred_comp_per_atom = self.predict_atom(zn, gprop.num_atoms)
         atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
-        loss =  cycle_loss + atom_loss + latt_loss + kld_loss
+        loss =  cos_loss + atom_loss + latt_loss + kld_loss
         loss_dict = {
-            'cycle_loss': cycle_loss,
+            # 'cycle_loss': cycle_loss,
             'atom_loss': atom_loss,
             'latt_loss': latt_loss,
             'kld_loss': kld_loss,
-            # 'cosine_loss': cos_loss,
+            'cosine_loss': cos_loss,
             # 'y2_loss': y2_loss,
             # 'y1_loss': y1_loss
         }

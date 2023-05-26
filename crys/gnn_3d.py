@@ -149,8 +149,8 @@ class Encoder(nn.Module):
         #################################################
         # noise inject vs reparametirization
         # x+=0.001*torch.randn_like(x)
-        mu, logvar = self.mu_fc(x), self.var_fc(x)
-        x = self.reparameterize(mu, logvar)
+        # mu, logvar = self.mu_fc(x), self.var_fc(x)
+        # x = self.reparameterize(mu, logvar)
         #################################################
 
         # initial bond features
@@ -161,8 +161,8 @@ class Encoder(nn.Module):
         for module in self.module_layers:
             x, y, z = module(g, lg, x, y, z)
         xr = self.pooling(g,x)
-        kld_loss = self.kld_loss(mu, logvar)
-        return x, xr, kld_loss
+        # kld_loss = self.kld_loss(mu, logvar)
+        return x, xr
 
 
 class hybridEncoder(nn.Module):
