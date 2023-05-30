@@ -131,11 +131,10 @@ class Evaluator:
                     input_g = fg
                 prop = prop.to(self.device)
 
-                z1, kld_loss = self.source_enc(input_g)
+                z1 = self.source_enc(input_g)
                 out = self.proj(z1)
                 out = self.head(out)
                 loss = self.criterion(out, prop)
-                loss+=kld_loss
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -157,11 +156,10 @@ class Evaluator:
                 prop = prop.to(self.device)
                 with torch.no_grad():
 
-                    z1, kld_loss = self.source_enc(input_g)
+                    z1 = self.source_enc(input_g)
                     out = self.proj(z1)
                     out = self.head(out)
                     loss = self.criterion(out, prop)
-                    loss+=kld_loss
 
                     running_loss+=loss.item()*fg.batch_size
             return running_loss
@@ -185,7 +183,7 @@ class Evaluator:
             prop = prop.to(self.device)
             with torch.no_grad():
 
-                z1, kld_loss = self.source_enc(input_g)
+                z1 = self.source_enc(input_g)
                 out = self.proj(z1)
                 out = self.head(out)
 
