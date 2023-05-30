@@ -111,8 +111,8 @@ class Encoder(nn.Module):
 
         self.hidden_features = hidden_dim
         self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
-        self.mu_fc = nn.Linear(hidden_dim,hidden_dim)
-        self.var_fc = nn.Linear(hidden_dim,hidden_dim)
+        # self.mu_fc = nn.Linear(hidden_dim,hidden_dim)
+        # self.var_fc = nn.Linear(hidden_dim,hidden_dim)
         self.edge_embedding = nn.Sequential(
             RBFExpansion(vmin=0, vmax=8, bins=edge_input_dim),
             MLPLayer(edge_input_dim, embedding_dim),

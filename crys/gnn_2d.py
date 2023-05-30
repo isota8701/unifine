@@ -57,21 +57,9 @@ class Encoder(nn.Module):
         super().__init__()
         self.hidden_features = hidden_dim
         self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
-        self.base_modules = nn.ModuleList([Roost() for _ in range(roost_layers-3)])
         self.module_layers = nn.ModuleList([Roost() for _ in range(roost_layers)])
-        self.mu_fc= nn.Linear(hidden_dim, hidden_dim)
-        self.var_fc= nn.Linear(hidden_dim, hidden_dim)
         self.pooling = AvgPooling()
 
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return eps * std + mu
-
-    def kld_loss(self, mu, log_var):
-        kld_loss = torch.mean(
-            -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
-        return kld_loss
 
     def forward(self, fg):
         fg = fg.local_var()
@@ -80,15 +68,10 @@ class Encoder(nn.Module):
         x = self.atom_embedding(x)
         #################################################
         # noise inject vs repara
-        # x+= 0.001*torch.randn_like(x)
+        x+= 0.001*torch.randn_like(x)
         #################################################
         # gated GCN updates: update node, edge features
-        for module in self.base_modules:
-            x = module(fg, x)
-        mu, logvar = self.mu_fc(x), self.var_fc(x)
-        x = self.reparameterize(mu, logvar)
         for module in self.module_layers:
             x = module(fg, x)
         xr = self.pooling(fg, x)
-        kld_loss = self.kld_loss(mu, logvar)
-        return xr, kld_loss
+        return xr

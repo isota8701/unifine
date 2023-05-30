@@ -29,25 +29,39 @@ class crysDnoise(nn.Module):
                                   nn.BatchNorm1d(cfg.GNN.hidden_dim),
                                   nn.ReLU(),
                                   nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim))
-
+        self.mu_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim)
+        self.var_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim)
         self.ce = nn.CrossEntropyLoss()
         self.cos = nn.CosineSimilarity(dim = 1)
 
+    def reparameterize(self, mu, logvar):
+        """
+        Reparameterization trick to sample from N(mu, var) from
+        N(0,1).
+        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+        :return: (Tensor) [B x D]
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
 
     def forward(self, gg, fg, gprop, yprop):
-        z1, kl = self.source_encoder(fg)
+        z1 = self.source_encoder(fg)
         zn, z2 = self.target_encoder(gg)
+        mu, logvar = self.mu_fc(z2), self.var_fc(z2)
+        z2 = self.reparameterize(mu, logvar)
 
         # crys_noise_cycle
-        # loss_p = F.mse_loss(self.proj(z1), z2)
-        # loss_i = F.mse_loss(z1, self.invp(z2))
-        # loss_c = F.mse_loss(self.invp(self.proj(z1)), z1)
-        # cycle_loss = loss_p + loss_i + loss_c
+        loss_p = F.mse_loss(self.proj(z1), z2)
+        loss_i = F.mse_loss(z1, self.invp(z2))
+        loss_c = F.mse_loss(self.invp(self.proj(z1)), z1)
+        cycle_loss = loss_p + loss_i + loss_c
 
-        kld_loss = kl
+        kld_loss = self.kld_loss(mu, logvar)
 
         # crys_noise_cos
-        cos_loss = -(self.cos(self.proj(z1), z2).mean())
+        # cos_loss = -(self.cos(self.proj(z1), z2).mean())
 
         pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
         latt_loss = self.lattice_loss(pred_latt, gprop)
@@ -56,13 +70,13 @@ class crysDnoise(nn.Module):
         pred_comp_per_atom = self.predict_atom(zn, gprop.num_atoms)
         atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
-        loss =  cos_loss + atom_loss + latt_loss + kld_loss
+        loss =  cycle_loss + atom_loss + latt_loss + kld_loss
         loss_dict = {
-            # 'cycle_loss': cycle_loss,
+            'cycle_loss': cycle_loss,
             'atom_loss': atom_loss,
             'latt_loss': latt_loss,
             'kld_loss': kld_loss,
-            'cosine_loss': cos_loss,
+            # 'cosine_loss': cos_loss,
             # 'y2_loss': y2_loss,
             # 'y1_loss': y1_loss
         }
@@ -107,9 +121,10 @@ class crysDnoise(nn.Module):
         loss = F.cross_entropy(pred_comp_per_atom, target_atomic_num, reduction='none')
         return scatter(loss, gdata.batch, reduce='mean').mean()
 
-    def num_loss(self, pred_num_atoms, gdata):
-        return F.cross_entropy(pred_num_atoms, gdata.num_atoms)
-
+    def kld_loss(self, mu, log_var):
+        kld_loss = torch.mean(
+            -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
+        return kld_loss
 
 class crysVAE(nn.Module):
     def __init__(self):
