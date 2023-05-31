@@ -52,11 +52,18 @@ class Encoder(nn.Module):
                  atom_input_dim: int = cfg.GNN.atom_input_dim,
                  hidden_dim: int= cfg.GNN.hidden_dim,
                  roost_layers: int = cfg.GNN.roost_layers,
+                 concat_dim: int = 64
                  ):
         """Initialize class with number of input features, conv layers."""
         super().__init__()
         self.hidden_features = hidden_dim
+
+        # 1) learn var
         self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
+        self.var_fc = nn.Linear(hidden_dim, hidden_dim)
+        # 2) learn var, concat
+        # self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim - concat_dim)
+        # self.var_fc = nn.Linear(hidden_dim, concat_dim)
         self.module_layers = nn.ModuleList([Roost() for _ in range(roost_layers)])
         self.pooling = AvgPooling()
 
@@ -67,8 +74,12 @@ class Encoder(nn.Module):
         x = fg.ndata.pop("atom_features")
         x = self.atom_embedding(x)
         #################################################
-        # noise inject vs repara
-        x+= 0.001*torch.randn_like(x)
+        # 1) learn var
+        var = self.var_fc(x)
+        x += var*torch.randn_like(x)
+        # 2) learn var, concat (256-concat dim + concat)
+        # var = self.var_fc(x)
+        # x = torch.cat([x, var], dim = 1)
         #################################################
         # gated GCN updates: update node, edge features
         for module in self.module_layers:
