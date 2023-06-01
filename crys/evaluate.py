@@ -70,7 +70,9 @@ class Evaluator:
         if args.pretrain:
             self.exp_name = f"evaluate_{args.exp_name}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
         else:
-            self.exp_name = f"evaluate_{cfg.model_name}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
+            call_name = cfg.model_name
+            call_name = call_name.split("pretrain")[0]
+            self.exp_name = f"evaluate_{call_name}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
 
         self.history = {'train': [], 'valid': [], 'test': []}
         self.history_file = os.path.join(self.directory, 'history_' + self.exp_name + '.pickle')
