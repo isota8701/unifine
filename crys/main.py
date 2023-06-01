@@ -22,15 +22,16 @@ def seed_everything(seed: int = cfg.random_seed):
 
 def main(args):
     seed_everything()
-    args.pretrain = True
+    # args.pretrain = True
     # args.device = 'cuda:3'
+    # args.exp_name = 'TEST'
     if args.pretrain:
         train_loader, valid_loader, test_loader = MaterialsDataloader(dataset=cfg.dataset)
         ptrainer = preTrainer(train_loader, valid_loader, test_loader, args)
         ptrainer.train()
         model_path = os.path.join(ptrainer.directory, ptrainer.exp_name)
     else:
-        model_path = os.path.join(cfg.checkpoint_dir, cfg.model_path)
+        model_path = os.path.join(cfg.checkpoint_dir, cfg.model_name)
 
     train_loader, valid_loader, test_loader = EvalLoader(dataset = cfg.evalset)
     evaluator = Evaluator(train_loader, valid_loader, test_loader, model_path, args)

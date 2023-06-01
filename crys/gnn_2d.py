@@ -59,10 +59,8 @@ class Encoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.replace_dim = replace_dim
         self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
-        # 1) learn
-        # self.var_fc = nn.Linear(hidden_dim, hidden_dim)
-        # 2) learn, replace
-        # self.var_fc = nn.Linear(hidden_dim, replace_dim)
+        self.noise_fc = nn.Linear(hidden_dim, hidden_dim)
+        self.replace_noise_fc = nn.Linear(hidden_dim, replace_dim)
         self.module_layers = nn.ModuleList([Roost() for _ in range(roost_layers)])
         self.pooling = AvgPooling()
 
@@ -73,22 +71,21 @@ class Encoder(nn.Module):
         x = fg.ndata.pop("atom_features")
         x = self.atom_embedding(x)
         #################################################
-        # fix
-        x += 0.001*torch.randn_like(x)
-        # fix replace
-        # v = x+ 0.001*torch.randn_like(x)
-        # v = v[:, -64:]
-        # x = torch.cat([x[:, :self.hidden_dim-64], v], dim = 1)
-        # 1) learn
-        # logvar = self.var_fc(x)
+
+        # fix noise
+        # x += 0.001*torch.randn_like(x)
+
+        # learn noise
+        # logvar = self.noise_fc(x)
         # std = torch.exp(0.5 * logvar)
-        # x = x +  std*torch.randn_like(std)
-        # 2) learn , replace
-        # logvar = self.var_fc(x)
-        # std = torch.exp(0.5*logvar)
-        # x_a, x_b = x[:, :self.hidden_dim-self.replace_dim], x[:,-self.replace_dim:]
-        # x_b= x_b + std * torch.randn_like(std)
-        # x = torch.cat([x_a, x_b], dim = 1)
+        # x = x + std*torch.randn_like(std)
+
+        # learn and split replace noise
+        logvar = self.replace_noise_fc(x)
+        std = torch.exp(0.5*logvar)
+        x_ori, x_rep = x[:, :self.hidden_dim-self.replace_dim], x[:,-self.replace_dim:]
+        x_rep= x_rep + std * torch.randn_like(std)
+        x = torch.cat([x_ori, x_rep], dim = 1)
         #################################################
         # gated GCN updates: update node, edge features
         for module in self.module_layers:

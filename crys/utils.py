@@ -215,9 +215,9 @@ def plot_history(filename):
 
 
 if __name__ == "__main__":
-    cfg.dataset = 'mp_3d_2020'
-    curate_jdata(cfg.dataset, cfg.max_atoms, cfg.cut_data)
+    # cfg.dataset = 'mp_3d_2020'
+    # curate_jdata(cfg.dataset, cfg.max_atoms, cfg.cut_data)
     # curate_eval()
-    # check_history('checkpoints/history_test_pretrain_0511_materials-project_3000.pickle')
+    check_history('checkpoints/history_evaluate_TEST_0601_finetune_formation_10000.pickle')
     # check_history('checkpoints/history_evaluate_crysVAE_nem_pretrain_0509_materials-project_77153_0511_finetune_formation_10000.pickle')
     # plot_history('checkpoints/history_evaluate_crysVAE_nem_pretrain_0509_materials-project_77153_0511_finetune_formation_10000.pickle')

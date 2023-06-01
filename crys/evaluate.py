@@ -30,10 +30,7 @@ class Evaluator:
             trained_model.load_state_dict(torch.load(load_model_path))
         self.pooling = AvgPooling()
         # base & target vae
-        self.source_enc = trained_model.source_encoder
-        self.proj = trained_model.proj
-        self.backbone = nn.ModuleList([self.source_enc,
-                                       self.proj])
+        self.backbone = nn.Sequential(trained_model.source_encoder,trained_model.proj)
 
 
         if cfg.weights == '3d':
@@ -50,9 +47,6 @@ class Evaluator:
             self.backbone.requires_grad_(False)
             self.head.requires_grad_(True)
 
-        # if y1 is trained
-        # self.head = trained_model.yprop_fc
-        ###################################
 
         param_groups = [dict(params = self.head.parameters(), lr = cfg.EVAL.lr_head)]
         if cfg.weights in ['finetune', 'rand-init', 'supervised', '3d']:
@@ -62,8 +56,8 @@ class Evaluator:
         # base
         # self.model = nn.Sequential(self.backbone, self.head).to(self.device)
 
-        self.model = nn.ModuleList([self.backbone.to(self.device),
-                                    self.head.to(self.device)])
+        self.model = nn.Sequential(self.backbone, self.head)
+        self.model = self.model.to(self.device)
 
 
         self.min_valid_loss = 1e10
@@ -73,7 +67,11 @@ class Evaluator:
 
         self.directory = cfg.checkpoint_dir
         name_date = datetime.now().strftime("%m%d")
-        self.exp_name = f"evaluate_{cfg.model_path}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
+        if args.pretrain:
+            self.exp_name = f"evaluate_{args.exp_name}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
+        else:
+            self.exp_name = f"evaluate_{cfg.model_name}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
+
         self.history = {'train': [], 'valid': [], 'test': []}
         self.history_file = os.path.join(self.directory, 'history_' + self.exp_name + '.pickle')
         self.mae_loss = nn.L1Loss()
@@ -131,11 +129,9 @@ class Evaluator:
                     input_g = fg
                 prop = prop.to(self.device)
 
-                z1 = self.source_enc(input_g)
-                out = self.proj(z1)
-                out = self.head(out)
-                loss = self.criterion(out, prop)
+                out = self.model(input_g)
 
+                loss = self.criterion(out, prop)
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -155,12 +151,9 @@ class Evaluator:
                     input_g = fg
                 prop = prop.to(self.device)
                 with torch.no_grad():
+                    out = self.model(input_g)
 
-                    z1 = self.source_enc(input_g)
-                    out = self.proj(z1)
-                    out = self.head(out)
                     loss = self.criterion(out, prop)
-
                     running_loss+=loss.item()*fg.batch_size
             return running_loss
 
@@ -182,10 +175,7 @@ class Evaluator:
                 input_g = fg
             prop = prop.to(self.device)
             with torch.no_grad():
-
-                z1 = self.source_enc(input_g)
-                out = self.proj(z1)
-                out = self.head(out)
+                out = self.model(input_g)
 
                 mae = self.mae_loss(out, prop)
                 mse = self.criterion(out, prop)
