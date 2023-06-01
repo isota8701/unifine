@@ -81,11 +81,11 @@ class Encoder(nn.Module):
         # x = x + std*torch.randn_like(std)
 
         # learn and split replace noise
-        logvar = self.replace_noise_fc(x)
-        std = torch.exp(0.5*logvar)
-        x_ori, x_rep = x[:, :self.hidden_dim-self.replace_dim], x[:,-self.replace_dim:]
-        x_rep= x_rep + std * torch.randn_like(std)
-        x = torch.cat([x_ori, x_rep], dim = 1)
+        # logvar = self.replace_noise_fc(x)
+        # std = torch.exp(0.5*logvar)
+        # x_ori, x_rep = x[:, :self.hidden_dim-self.replace_dim], x[:,-self.replace_dim:]
+        # x_rep= x_rep + std * torch.randn_like(std)
+        # x = torch.cat([x_ori, x_rep], dim = 1)
         #################################################
         # gated GCN updates: update node, edge features
         for module in self.module_layers:

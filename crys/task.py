@@ -5,7 +5,6 @@ from torch_scatter import scatter
 from config import cfg
 from gnn_2d import Encoder as source_encoder
 from gnn_3d import Encoder as target_encoder
-from gnn_3d import hybridEncoder
 import numpy as np
 from dgl.nn.pytorch.glob import AvgPooling
 
