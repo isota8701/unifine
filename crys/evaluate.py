@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import os
-from task import crysDnoise as crysPretrain
+from task import crysVQVAE as crysPretrain
 from config import cfg
 from time import time
 from dgl.nn.pytorch.glob import AvgPooling
@@ -29,8 +29,13 @@ class Evaluator:
         if cfg.weights in ['freeze', 'finetune', 'supervised']:
             trained_model.load_state_dict(torch.load(load_model_path))
         self.pooling = AvgPooling()
-        # base & target vae
-        self.backbone = nn.Sequential(trained_model.source_encoder,trained_model.proj)
+        # base
+        # self.backbone = nn.Sequential(trained_model.source_encoder,trained_model.proj)
+
+        # vq
+        self.enc = trained_model.source_encoder
+        self.vq = trained_model.vq_layer
+        self.backbone = nn.ModuleList([self.enc,self.vq])
 
 
         if cfg.weights == '3d':
@@ -54,12 +59,11 @@ class Evaluator:
         self.optimizer = torch.optim.AdamW(param_groups)
 
         # base
-        # self.model = nn.Sequential(self.backbone, self.head).to(self.device)
+        # self.model = nn.Sequential(self.backbone, self.head)
+        # vqvae
+        self.model = self.backbone.append(self.head)
 
-        self.model = nn.Sequential(self.backbone, self.head)
         self.model = self.model.to(self.device)
-
-
         self.min_valid_loss = 1e10
         self.best_epoch = 0
         self.criterion = nn.MSELoss()
@@ -130,10 +134,17 @@ class Evaluator:
                     fg = fg.to(self.device)
                     input_g = fg
                 prop = prop.to(self.device)
+                # base
+                # out = self.model(input_g)
 
-                out = self.model(input_g)
-
+                # vqvae
+                zs = self.enc(input_g)
+                q, vq_loss = self.vq.eval_forward(zs)
+                q = self.pooling(input_g, q)
+                out = self.head(q)
                 loss = self.criterion(out, prop)
+                loss+= vq_loss
+
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -153,7 +164,14 @@ class Evaluator:
                     input_g = fg
                 prop = prop.to(self.device)
                 with torch.no_grad():
-                    out = self.model(input_g)
+                    # out = self.model(input_g)
+                    # vqvae
+                    zs = self.enc(input_g)
+
+                    q, vq_loss = self.vq.eval_forward(zs)
+
+                    q = self.pooling(input_g, q)
+                    out = self.head(q)
 
                     loss = self.criterion(out, prop)
                     running_loss+=loss.item()*fg.batch_size
@@ -177,7 +195,14 @@ class Evaluator:
                 input_g = fg
             prop = prop.to(self.device)
             with torch.no_grad():
-                out = self.model(input_g)
+                # out = self.model(input_g)
+                # vqvae
+                zs = self.enc(input_g)
+
+                q, vq_loss = self.vq.eval_forward(zs)
+
+                q = self.pooling(input_g,q)
+                out = self.head(q)
 
                 mae = self.mae_loss(out, prop)
                 mse = self.criterion(out, prop)

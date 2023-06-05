@@ -65,11 +65,12 @@ class Encoder(nn.Module):
         self.pooling = AvgPooling()
 
     def drop_feature(self, x, drop_prob):
-        drop_mask = torch.empty((x.size(1), ), dtype = torch.float32,
-                                device = x.device).uniform_(0,1) < drop_prob
-        x = x.clone()
-        x[:, drop_mask] = 0
-        return x
+        drop_mask = torch.empty((x.size(0),x.size(1)), dtype = torch.float32,
+                                device = x.device).uniform_(0,1) < 1-drop_prob
+        # xx = x*drop_mask
+        xx = torch.zeros(x.size(), device=x.device)
+        xx[drop_mask] = x[drop_mask]
+        return xx
 
     def forward(self, fg):
         fg = fg.local_var()
@@ -94,10 +95,10 @@ class Encoder(nn.Module):
         # x = torch.cat([x_ori, x_rep], dim = 1)
 
         # mask feature
-        x = self.drop_feature(x, drop_prob= 0.35)
+        x = self.drop_feature(x, drop_prob= 0.1)
         #################################################
         # gated GCN updates: update node, edge features
         for module in self.module_layers:
             x = module(fg, x)
-        xr = self.pooling(fg, x)
-        return xr
+        # xr = self.pooling(fg, x)
+        return x
