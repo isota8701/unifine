@@ -179,11 +179,11 @@ class crysHyrbid(nn.Module):
     def forward(self, gg, fg, gprop, yprop):
         zs = self.source_encoder(fg)
         zt = self.target_encoder(gg)
-        # mu, logvar = self.mu_fc(zt), self.var_fc(zt)
-        # zt = self.reparameterize(mu, logvar)
+        mu, logvar = self.mu_fc(zt), self.var_fc(zt)
+        zt = self.reparameterize(mu, logvar)
         z2 = self.pooling(gg[0], zt)
-        mu, logvar = self.mu_fc(z2), self.var_fc(z2)
-        z2 = self.reparameterize(mu, logvar)
+        # mu, logvar = self.mu_fc(z2), self.var_fc(z2)
+        # z2 = self.reparameterize(mu, logvar)
 
         pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
         latt_loss = self.lattice_loss(pred_latt, gprop)
