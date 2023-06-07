@@ -100,5 +100,5 @@ class Encoder(nn.Module):
         # gated GCN updates: update node, edge features
         for module in self.module_layers:
             x = module(fg, x)
-        # xr = self.pooling(fg, x)
+        xr = self.pooling(fg, x)
         return x

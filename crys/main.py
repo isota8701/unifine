@@ -24,7 +24,6 @@ def main(args):
     seed_everything()
     args.pretrain = True
     args.device = 'cuda:3'
-    args.exp_name = "test"
     if args.pretrain:
         train_loader, valid_loader, test_loader = MaterialsDataloader(dataset=cfg.dataset)
         ptrainer = preTrainer(train_loader, valid_loader, test_loader, args)

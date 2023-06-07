@@ -59,8 +59,8 @@ class crysDnoise(nn.Module):
         atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
         # crys_noise_cycle
-        loss_p = F.mse_loss(self.proj(z1), z2.detach())
-        loss_i = F.mse_loss(z1, self.invp(z2.detach()))
+        loss_p = F.mse_loss(self.proj(z1), z2)
+        loss_i = F.mse_loss(z1, self.invp(z2))
         loss_c = F.mse_loss(self.invp(self.proj(z1)), z1)
         cycle_loss = loss_p + loss_i + loss_c
 
@@ -130,7 +130,9 @@ class crysHyrbid(nn.Module):
         super().__init__()
         self.source_encoder = source_encoder()
         self.target_encoder = target_encoder()
-        self.yprop_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.output_dim)
+        self.lattice_fc = nn.Linear(cfg.GNN.hidden_dim, 6)
+        self.lattice_scaler = torch.load(cfg.data_dir + cfg.dataset + "_LATTICE-SCALER.pt")
+        self.atom_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.max_atomic_num)
         self.mu_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim)
         self.var_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim)
         self.proj = nn.Sequential(nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim),
@@ -154,6 +156,14 @@ class crysHyrbid(nn.Module):
             id+=num_atom
         return torch.cat(ids)
 
+    def replace_feature(self, x, y, replace_prob):
+        mask = torch.empty((x.size(0),), dtype = torch.float32,
+                           device = x.device).uniform_(0,1) < replace_prob
+        xx = x.clone()
+        xx[mask,:] = y[mask,:]
+        return xx
+
+
     def reparameterize(self, mu, logvar):
         """
         Reparameterization trick to sample from N(mu, var) from
@@ -169,48 +179,35 @@ class crysHyrbid(nn.Module):
     def forward(self, gg, fg, gprop, yprop):
         zs = self.source_encoder(fg)
         zt = self.target_encoder(gg)
-        mu, logvar = self.mu_fc(zt), self.sigma_fc(zt)
+        mu, logvar = self.mu_fc(zt), self.var_fc(zt)
         zt = self.reparameterize(mu, logvar)
+        z2 = self.pooling(gg[0], zt)
 
+        pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
+        latt_loss = self.lattice_loss(pred_latt, gprop)
 
-        # n_atoms = zs.shape[0]
-        # indices = torch.randperm(n_atoms, device = zs.device)
-        # indices = indices[:int(n_atoms*0.7)]
-        # indices = self.get_indices(gprop, 0.3)
-        # zh = zs.clone()
-        # zh[indices,:] = zt[indices,:]
+        pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
+        atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
-        loss_p = F.mse_loss(self.proj(zs), zt)
-        loss_i = F.mse_loss(zs, self.invp(zt))
-        loss_c = F.mse_loss(self.invp(self.proj(zs)), zs)
-        cycle_loss = loss_p + loss_i + loss_c
+        zh = self.replace_feature(zs, zt, 0.3)
+        hybrid_loss = F.mse_loss(self.proj(zh), zt.detach())
+
+        # loss_p = F.mse_loss(self.proj(zs), zt.detach())
+        # loss_i = F.mse_loss(zs, self.invp(zt.detach()))
+        # loss_c = F.mse_loss(self.invp(self.proj(zs)), zs)
+        # cycle_loss = loss_p + loss_i + loss_c
 
         z1 = self.pooling(fg, self.proj(zs))
-        z2 = self.pooling(gg[0], zt)
         # hybrid loss
         similarity = self.cos(z1, z2).mean()
-
-        pred_prop1 = self.yprop_fc(z1)
-        y1_loss = F.mse_loss(pred_prop1, yprop)
-
-        pred_prop2 = self.yprop_fc(z2)
-        y2_loss = F.mse_loss(pred_prop2, yprop)
-
         kld_loss = self.kld_loss(mu, logvar)
-        # pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
-        # latt_loss = self.lattice_loss(pred_latt, gprop)
-        # latt_loss*=10
-        #
-        # pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
-        # atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
-        loss =  y2_loss + kld_loss + cycle_loss + y1_loss
+        loss = atom_loss + latt_loss + hybrid_loss
         loss_dict = {
             'similarity': similarity,
-            # 'hybrid_loss': hybrid_loss,
-            'y1_loss': y1_loss,
-            'y2_loss':y2_loss,
-            'cycle_loss':cycle_loss,
+            'atom_loss': atom_loss,
+            'latt_loss': latt_loss,
+            'hybrid_loss': hybrid_loss,
             'kld_loss':kld_loss,
             # 'cl_loss': cl_loss
         }
@@ -273,24 +270,44 @@ class VectorQuantizer(nn.Module):
 
         # initialize embeddings
         self.embeddings = nn.Embedding(self.num_embeddings, self.embedding_dim)
+        self.projection = nn.Sequential(nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim),
+                                  nn.BatchNorm1d(cfg.GNN.hidden_dim),
+                                  nn.ReLU(),
+                                  nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim))
 
-    def forward(self, x, y):
+    # def forward(self, x, y):
+    #     encoding_indices = self.get_code_indices(x)
+    #     # print(encoding_indices[:5])
+    #     quantized = self.quantize(encoding_indices)
+    #     quantized = quantized.view_as(x)
+    #     # embedding loss: move the embeddings towards the encoder's output
+    #     q_latent_loss = F.mse_loss(quantized, x.detach())
+    #     # commitment loss
+    #     e_latent_loss = F.mse_loss(x, quantized.detach())
+    #     s_latent_loss = F.mse_loss(y, quantized.detach())
+    #     s_latent_loss+=F.mse_loss(y, x.detach())
+    #     loss = q_latent_loss + self.commitment_cost * (e_latent_loss + s_latent_loss)
+    #     # Straight Through Estimator
+    #     quantized = (x+y) + (quantized - (x+y)).detach().contiguous()
+    #
+    #     return quantized, loss
+
+    def forward(self, x,y):
         encoding_indices = self.get_code_indices(x)
-        # print(encoding_indices[:5])
         quantized = self.quantize(encoding_indices)
         quantized = quantized.view_as(x)
-        # embedding loss: move the embeddings towards the encoder's output
         q_latent_loss = F.mse_loss(quantized, x.detach())
-        # commitment loss
         e_latent_loss = F.mse_loss(x, quantized.detach())
+        # y = self.projection(y)
         s_latent_loss = F.mse_loss(y, quantized.detach())
-        loss = q_latent_loss + self.commitment_cost * e_latent_loss + s_latent_loss
-        # Straight Through Estimator
-        quantized = (x+y) + (quantized - (x+y)).detach().contiguous()
-
+        s_latent_loss += F.mse_loss(quantized, y.detach())
+        # s_latent_loss += F.mse_loss(y, x.detach())
+        loss = q_latent_loss + self.commitment_cost*(e_latent_loss+s_latent_loss)
+        quantized = (x + y) + (quantized - (x + y)).detach().contiguous()
         return quantized, loss
 
     def eval_forward(self, y):
+        # y = self.projection(y)
         encoding_indices = self.get_code_indices(y)
         # print(encoding_indices[:5])
         quantized = self.quantize(encoding_indices)
@@ -299,7 +316,7 @@ class VectorQuantizer(nn.Module):
         q_latent_loss = F.mse_loss(quantized, y.detach())
         # commitment loss
         s_latent_loss = F.mse_loss(y, quantized.detach())
-        loss = q_latent_loss +  s_latent_loss
+        loss = q_latent_loss +  self.commitment_cost*s_latent_loss
         # Straight Through Estimator
         quantized = y + (quantized - y).detach().contiguous()
         return quantized, loss
@@ -339,15 +356,16 @@ class crysVQVAE(nn.Module):
     def forward(self, gg, fg, gprop, yprop):
         zs = self.source_encoder(fg)
         zt = self.target_encoder(gg)
-        z2 = self.pooling(gg[0], zt)
 
-        quantized, vq_loss = self.vq_layer(zt, zs)
+        zq, vq_loss = self.vq_layer(zt, zs)
+        z2 = self.pooling(gg[0], zq)
+
 
         pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
         latt_loss = self.lattice_loss(pred_latt, gprop)
         # latt_loss*=10
 
-        pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
+        pred_comp_per_atom = self.predict_atom(zq, gprop.num_atoms)
         atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
 

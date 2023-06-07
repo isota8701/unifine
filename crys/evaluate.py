@@ -37,6 +37,9 @@ class Evaluator:
         self.vq = trained_model.vq_layer
         self.backbone = nn.ModuleList([self.enc,self.vq])
 
+        # hybrid
+        self.backbone = nn.Sequential(trained_model.source_encoder, trained_model.proj)
+
 
         if cfg.weights == '3d':
             self.backbone = trained_model.target_encoder
@@ -60,8 +63,12 @@ class Evaluator:
 
         # base
         # self.model = nn.Sequential(self.backbone, self.head)
+
         # vqvae
         self.model = self.backbone.append(self.head)
+
+        # hybrid
+        # self.model = nn.ModuleList([self.backbone, self.head])
 
         self.model = self.model.to(self.device)
         self.min_valid_loss = 1e10
@@ -145,6 +152,12 @@ class Evaluator:
                 loss = self.criterion(out, prop)
                 loss+= vq_loss
 
+                # hybrid
+                # zs = self.backbone(input_g)
+                # z = self.pooling(input_g, zs)
+                # out = self.head(z)
+                # loss = self.criterion(out, prop)
+
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -164,16 +177,23 @@ class Evaluator:
                     input_g = fg
                 prop = prop.to(self.device)
                 with torch.no_grad():
+                    # base
                     # out = self.model(input_g)
+
                     # vqvae
                     zs = self.enc(input_g)
-
                     q, vq_loss = self.vq.eval_forward(zs)
-
                     q = self.pooling(input_g, q)
                     out = self.head(q)
-
                     loss = self.criterion(out, prop)
+                    loss+=vq_loss
+
+                    # hybrid
+                    # zs = self.backbone(input_g)
+                    # z = self.pooling(input_g, zs)
+                    # out = self.head(z)
+                    # loss = self.criterion(out, prop)
+
                     running_loss+=loss.item()*fg.batch_size
             return running_loss
 
@@ -195,14 +215,19 @@ class Evaluator:
                 input_g = fg
             prop = prop.to(self.device)
             with torch.no_grad():
+                # base
                 # out = self.model(input_g)
+
                 # vqvae
                 zs = self.enc(input_g)
-
                 q, vq_loss = self.vq.eval_forward(zs)
-
                 q = self.pooling(input_g,q)
                 out = self.head(q)
+
+                # hybrid
+                # zs = self.backbone(input_g)
+                # z = self.pooling(input_g, zs)
+                # out = self.head(z)
 
                 mae = self.mae_loss(out, prop)
                 mse = self.criterion(out, prop)
