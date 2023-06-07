@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import os
-from task import crysVQVAE as crysPretrain
+from task import crysHyrbid as crysPretrain
 from config import cfg
 from time import time
 from dgl.nn.pytorch.glob import AvgPooling
@@ -33,12 +33,12 @@ class Evaluator:
         # self.backbone = nn.Sequential(trained_model.source_encoder,trained_model.proj)
 
         # vq
-        self.enc = trained_model.source_encoder
-        self.vq = trained_model.vq_layer
-        self.backbone = nn.ModuleList([self.enc,self.vq])
+        # self.enc = trained_model.source_encoder
+        # self.vq = trained_model.vq_layer
+        # self.backbone = nn.ModuleList([self.enc,self.vq])
 
         # hybrid
-        # self.backbone = nn.Sequential(trained_model.source_encoder, trained_model.proj)
+        self.backbone = nn.Sequential(trained_model.source_encoder, trained_model.proj)
 
 
         if cfg.weights == '3d':
@@ -65,10 +65,10 @@ class Evaluator:
         # self.model = nn.Sequential(self.backbone, self.head)
 
         # vqvae
-        self.model = self.backbone.append(self.head)
+        # self.model = self.backbone.append(self.head)
 
         # hybrid
-        # self.model = nn.ModuleList([self.backbone, self.head])
+        self.model = nn.ModuleList([self.backbone, self.head])
 
         self.model = self.model.to(self.device)
         self.min_valid_loss = 1e10
@@ -145,18 +145,18 @@ class Evaluator:
                 # out = self.model(input_g)
 
                 # vqvae
-                zs = self.enc(input_g)
-                q, vq_loss = self.vq.eval_forward(zs)
-                q = self.pooling(input_g, q)
-                out = self.head(q)
-                loss = self.criterion(out, prop)
-                loss+= vq_loss
+                # zs = self.enc(input_g)
+                # q, vq_loss = self.vq.eval_forward(zs)
+                # q = self.pooling(input_g, q)
+                # out = self.head(q)
+                # loss = self.criterion(out, prop)
+                # loss+= vq_loss
 
                 # hybrid
-                # zs = self.backbone(input_g)
-                # z = self.pooling(input_g, zs)
-                # out = self.head(z)
-                # loss = self.criterion(out, prop)
+                zs = self.backbone(input_g)
+                z = self.pooling(input_g, zs)
+                out = self.head(z)
+                loss = self.criterion(out, prop)
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -181,18 +181,18 @@ class Evaluator:
                     # out = self.model(input_g)
 
                     # vqvae
-                    zs = self.enc(input_g)
-                    q, vq_loss = self.vq.eval_forward(zs)
-                    q = self.pooling(input_g, q)
-                    out = self.head(q)
-                    loss = self.criterion(out, prop)
-                    loss+=vq_loss
+                    # zs = self.enc(input_g)
+                    # q, vq_loss = self.vq.eval_forward(zs)
+                    # q = self.pooling(input_g, q)
+                    # out = self.head(q)
+                    # loss = self.criterion(out, prop)
+                    # loss+=vq_loss
 
                     # hybrid
-                    # zs = self.backbone(input_g)
-                    # z = self.pooling(input_g, zs)
-                    # out = self.head(z)
-                    # loss = self.criterion(out, prop)
+                    zs = self.backbone(input_g)
+                    z = self.pooling(input_g, zs)
+                    out = self.head(z)
+                    loss = self.criterion(out, prop)
 
                     running_loss+=loss.item()*fg.batch_size
             return running_loss
@@ -219,15 +219,15 @@ class Evaluator:
                 # out = self.model(input_g)
 
                 # vqvae
-                zs = self.enc(input_g)
-                q, vq_loss = self.vq.eval_forward(zs)
-                q = self.pooling(input_g,q)
-                out = self.head(q)
+                # zs = self.enc(input_g)
+                # q, vq_loss = self.vq.eval_forward(zs)
+                # q = self.pooling(input_g,q)
+                # out = self.head(q)
 
                 # hybrid
-                # zs = self.backbone(input_g)
-                # z = self.pooling(input_g, zs)
-                # out = self.head(z)
+                zs = self.backbone(input_g)
+                z = self.pooling(input_g, zs)
+                out = self.head(z)
 
                 mae = self.mae_loss(out, prop)
                 mse = self.criterion(out, prop)

@@ -180,8 +180,10 @@ class crysHyrbid(nn.Module):
         zs = self.source_encoder(fg)
         zt = self.target_encoder(gg)
         mu, logvar = self.mu_fc(zt), self.var_fc(zt)
-        zt = self.reparameterize(mu, logvar)
+        # zt = self.reparameterize(mu, logvar)
         z2 = self.pooling(gg[0], zt)
+        mu, logvar = self.mu_fc(z2), self.var_fc(z2)
+        z2 = self.reparameterize(mu, logvar)
 
         pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
         latt_loss = self.lattice_loss(pred_latt, gprop)
@@ -202,7 +204,7 @@ class crysHyrbid(nn.Module):
         similarity = self.cos(z1, z2).mean()
         kld_loss = self.kld_loss(mu, logvar)
 
-        loss = atom_loss + latt_loss + hybrid_loss
+        loss = atom_loss + latt_loss + hybrid_loss + kld_loss
         loss_dict = {
             'similarity': similarity,
             'atom_loss': atom_loss,
