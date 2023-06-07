@@ -192,7 +192,7 @@ class crysHyrbid(nn.Module):
         atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
         zh = self.replace_feature(zs, zt, 0.3)
-        hybrid_loss = F.mse_loss(zh, zt.detach())
+        hybrid_loss = F.mse_loss(zh, zt)
 
         # loss_p = F.mse_loss(self.proj(zs), zt.detach())
         # loss_i = F.mse_loss(zs, self.invp(zt.detach()))
