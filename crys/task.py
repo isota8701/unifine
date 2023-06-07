@@ -300,9 +300,9 @@ class VectorQuantizer(nn.Module):
         e_latent_loss = F.mse_loss(x, quantized.detach())
         # y = self.projection(y)
         s_latent_loss = F.mse_loss(y, quantized.detach())
-        s_latent_loss += F.mse_loss(quantized, y.detach())
+        qs_latent_loss = F.mse_loss(quantized, y.detach())
         # s_latent_loss += F.mse_loss(y, x.detach())
-        loss = q_latent_loss + self.commitment_cost*(e_latent_loss+s_latent_loss)
+        loss = q_latent_loss + qs_latent_loss + self.commitment_cost*(e_latent_loss+s_latent_loss)
         quantized = (x + y) + (quantized - (x + y)).detach().contiguous()
         return quantized, loss
 
