@@ -179,8 +179,8 @@ class crysHyrbid(nn.Module):
     def forward(self, gg, fg, gprop, yprop):
         zs = self.source_encoder(fg)
         zt = self.target_encoder(gg)
-        mu, logvar = self.mu_fc(zt), self.var_fc(zt)
-        zt = self.reparameterize(mu, logvar)
+        # mu, logvar = self.mu_fc(zt), self.var_fc(zt)
+        # zt = self.reparameterize(mu, logvar)
         z2 = self.pooling(gg[0], zt)
         # mu, logvar = self.mu_fc(z2), self.var_fc(z2)
         # z2 = self.reparameterize(mu, logvar)
@@ -192,25 +192,25 @@ class crysHyrbid(nn.Module):
         atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
         zh = self.replace_feature(zs, zt, 0.3)
-        hybrid_loss = F.mse_loss(self.proj(zh), zt.detach())
+        hybrid_loss = F.mse_loss(zh, zt.detach())
 
         # loss_p = F.mse_loss(self.proj(zs), zt.detach())
         # loss_i = F.mse_loss(zs, self.invp(zt.detach()))
         # loss_c = F.mse_loss(self.invp(self.proj(zs)), zs)
         # cycle_loss = loss_p + loss_i + loss_c
 
-        z1 = self.pooling(fg, self.proj(zs))
+        z1 = self.pooling(fg, zs)
         # hybrid loss
         similarity = self.cos(z1, z2).mean()
-        kld_loss = self.kld_loss(mu, logvar)
+        # kld_loss = self.kld_loss(mu, logvar)
 
-        loss = atom_loss + latt_loss + hybrid_loss + kld_loss
+        loss = atom_loss + latt_loss + hybrid_loss #+ kld_loss
         loss_dict = {
             'similarity': similarity,
             'atom_loss': atom_loss,
             'latt_loss': latt_loss,
             'hybrid_loss': hybrid_loss,
-            'kld_loss':kld_loss,
+            # 'kld_loss':kld_loss,
             # 'cl_loss': cl_loss
         }
         return loss, loss_dict

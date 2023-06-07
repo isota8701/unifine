@@ -38,7 +38,7 @@ class Evaluator:
         # self.backbone = nn.ModuleList([self.enc,self.vq])
 
         # hybrid
-        self.backbone = nn.Sequential(trained_model.source_encoder, trained_model.proj)
+        self.backbone = trained_model.source_encoder
 
 
         if cfg.weights == '3d':
