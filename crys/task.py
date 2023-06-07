@@ -179,7 +179,7 @@ class crysHyrbid(nn.Module):
     def forward(self, gg, fg, gprop, yprop):
         zs = self.source_encoder(fg)
         zt = self.target_encoder(gg)
-        mu, logvar = self.mu_fc(zt), self.var_fc(zt)
+        # mu, logvar = self.mu_fc(zt), self.var_fc(zt)
         # zt = self.reparameterize(mu, logvar)
         z2 = self.pooling(gg[0], zt)
         mu, logvar = self.mu_fc(z2), self.var_fc(z2)
