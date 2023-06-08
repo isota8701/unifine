@@ -51,8 +51,8 @@ class RBFExpansion(nn.Module):
 def refine_materials_project(df, max_atoms):
     df = df[df['atoms'].apply(lambda x: len(x['elements']) < max_atoms)]
     d = df.copy()
-    d.loc[:, 'bulk_modulus'] = d['elasticity'].apply(lambda x: x['G_Voigt'] if x else None)
-    d.loc[:, 'shear_modulus'] = d['elasticity'].apply(lambda x: x['K_Voigt'] if x else None)
+    d.loc[:, 'bulk_modulus'] = d['elasticity'].apply(lambda x: np.log10(x['G_Voigt']) if x else None)
+    d.loc[:, 'shear_modulus'] = d['elasticity'].apply(lambda x: np.log10(x['K_Voigt']) if x else None)
     d1 = d[d['full_formula'].duplicated(keep=False) == False]
     d2 = d[d['full_formula'].duplicated(keep=False)]
     min_fe = d2.groupby('full_formula').min('formation_energy_per_atom')['formation_energy_per_atom'].values
@@ -215,9 +215,9 @@ def plot_history(filename):
 
 
 if __name__ == "__main__":
-    # cfg.dataset = 'mp_3d_2020'
-    # curate_jdata(cfg.dataset, cfg.max_atoms, cfg.cut_data)
+    cfg.dataset = 'mp_3d_2020'
+    curate_jdata(cfg.dataset, cfg.max_atoms, cfg.cut_data)
     # curate_eval()
-    check_history('checkpoints/history_evaluate_TEST_0601_finetune_formation_10000.pickle')
+    # check_history('checkpoints/history_evaluate_TEST_0601_finetune_formation_10000.pickle')
     # check_history('checkpoints/history_evaluate_crysVAE_nem_pretrain_0509_materials-project_77153_0511_finetune_formation_10000.pickle')
     # plot_history('checkpoints/history_evaluate_crysVAE_nem_pretrain_0509_materials-project_77153_0511_finetune_formation_10000.pickle')

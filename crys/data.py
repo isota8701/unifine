@@ -229,6 +229,9 @@ class LoadEvalset(torch.utils.data.Dataset):
                  ):
         print(f"Loading eval dataset : {dataset}")
         df = pd.read_pickle(path + dataset +".pkl")
+        # target
+        df = df.dropna(subset = [target]).reset_index(drop = True)
+        # df = df[df[target] > 0].reset_index(drop = True)
         self.prop = target
         self.formula = []
         self.labels= []
