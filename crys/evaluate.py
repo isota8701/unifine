@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import os
-from task import crysHyrbid as crysPretrain
+from task import crysHyrbid as crysModel
 from config import cfg
 from time import time
 from dgl.nn.pytorch.glob import AvgPooling
@@ -23,10 +23,11 @@ class Evaluator:
         self.valid_loader = valid_loader
         self.test_loader = test_loader
         self.device = args.device
-        trained_model = crysPretrain()
-        if cfg.weights not in ['freeze', 'finetune', 'supervised', 'rand-init', '3d']:
+        self.args = args
+        trained_model = crysModel(flag=args.kd, formula_graph=args.fg)
+        if args.weight not in ['freeze', 'finetune', 'rand-init', '3d']:
             assert False, "Unspecified Evaluation Type"
-        if cfg.weights in ['freeze', 'finetune', 'supervised']:
+        if args.weight in ['freeze', 'finetune']:
             trained_model.load_state_dict(torch.load(load_model_path))
         self.pooling = AvgPooling()
         # base
@@ -41,23 +42,19 @@ class Evaluator:
         self.backbone = trained_model.source_encoder
 
 
-        if cfg.weights == '3d':
+        if args.weight == '3d':
             self.backbone = trained_model.target_encoder
-        elif cfg.weights == 'supervised':
-            self.backbone = trained_model.source_encoder
 
-        ###################################
-        # base
         self.head = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.output_dim)
         self.head.weight.data.normal_(mean=0., std=0.01)
         self.head.bias.data.zero_()
-        if (cfg.weights =='freeze'):
+        if (args.weight =='freeze'):
             self.backbone.requires_grad_(False)
             self.head.requires_grad_(True)
 
 
         param_groups = [dict(params = self.head.parameters(), lr = cfg.EVAL.lr_head)]
-        if cfg.weights in ['finetune', 'rand-init', 'supervised', '3d']:
+        if args.weight in ['finetune', 'rand-init', 'supervised', '3d']:
             param_groups.append(dict(params = self.backbone.parameters(), lr = cfg.EVAL.lr_backbone))
         self.optimizer = torch.optim.AdamW(param_groups)
 
@@ -79,21 +76,21 @@ class Evaluator:
         self.directory = cfg.checkpoint_dir
         name_date = datetime.now().strftime("%m%d")
         if args.pretrain:
-            self.exp_name = f"evaluate_{args.exp_name}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
+            self.exp_name = f"evaluate_{args.exp_name}_{name_date}_{args.weight}_{args.target.split('_')[0]}_" + cfg.evalset.split('_')[-1]
         else:
             call_name = cfg.model_name
             call_name = call_name.split("pretrain")[0]
-            self.exp_name = f"evaluate_{call_name}_{name_date}_{cfg.weights}_{cfg.prop.split('_')[0]}_" + cfg.evalset.split('_')[-1]
+            self.exp_name = f"evaluate_{call_name}_{name_date}_{args.weight}_{args.target.split('_')[0]}_" + cfg.evalset.split('_')[-1]
 
         self.history = {'train': [], 'valid': [], 'test': []}
         self.history_file = os.path.join(self.directory, 'history_' + self.exp_name + '.pickle')
         self.mae_loss = nn.L1Loss()
 
     def train(self):
-        print(f"## Start linear evaluation (weights:{cfg.weights}, target property:{cfg.prop})")
+        print(f"## Start linear evaluation (weights:{self.args.weight}, target property:{self.args.target})")
         start_time = time()
         for epoch in range(cfg.EVAL.max_epoch):
-            if cfg.weights == 'freeze':
+            if self.args.weight == 'freeze':
                 self.model.eval()
             else:
                 self.model.train()
@@ -132,29 +129,18 @@ class Evaluator:
         if split == 'train':
             running_loss =  0.
             for batch in loader:
-                if cfg.weights == '3d':
+                if self.args.weight == '3d':
                     gg, fg, prop = batch
                     g, lg =gg[0].to(self.device), gg[1].to(self.device)
-                    input_g = (g, lg)
+                    zs = self.backbone((g,lg))
+                    z = self.pooling(g, zs)
                 else:
                     fg, prop = batch
                     fg = fg.to(self.device)
-                    input_g = fg
+                    zs = self.backbone(fg)
+                    z = self.pooling(fg, zs)
+
                 prop = prop.to(self.device)
-                # base
-                # out = self.model(input_g)
-
-                # vqvae
-                # zs = self.enc(input_g)
-                # q, vq_loss = self.vq.eval_forward(zs)
-                # q = self.pooling(input_g, q)
-                # out = self.head(q)
-                # loss = self.criterion(out, prop)
-                # loss+= vq_loss
-
-                # hybrid
-                zs = self.backbone(input_g)
-                z = self.pooling(input_g, zs)
                 out = self.head(z)
                 loss = self.criterion(out, prop)
 
@@ -167,30 +153,18 @@ class Evaluator:
             self.model.eval()
             running_loss = 0.
             for batch in loader:
-                if cfg.weights == '3d':
-                    gg, fg, prop = batch
-                    g, lg = gg[0].to(self.device), gg[1].to(self.device)
-                    input_g = (g, lg)
-                else:
-                    fg, prop = batch
-                    fg = fg.to(self.device)
-                    input_g = fg
-                prop = prop.to(self.device)
                 with torch.no_grad():
-                    # base
-                    # out = self.model(input_g)
-
-                    # vqvae
-                    # zs = self.enc(input_g)
-                    # q, vq_loss = self.vq.eval_forward(zs)
-                    # q = self.pooling(input_g, q)
-                    # out = self.head(q)
-                    # loss = self.criterion(out, prop)
-                    # loss+=vq_loss
-
-                    # hybrid
-                    zs = self.backbone(input_g)
-                    z = self.pooling(input_g, zs)
+                    if self.args.weight == '3d':
+                        gg, fg, prop = batch
+                        g, lg = gg[0].to(self.device), gg[1].to(self.device)
+                        zs = self.backbone((g,lg))
+                        z = self.pooling(g, zs)
+                    else:
+                        fg, prop = batch
+                        fg = fg.to(self.device)
+                        zs = self.backbone(fg)
+                        z = self.pooling(fg, zs)
+                    prop = prop.to(self.device)
                     out = self.head(z)
                     loss = self.criterion(out, prop)
 
@@ -204,29 +178,18 @@ class Evaluator:
         running_mae = 0.
         running_mse = 0.
         for batch in loader:
-            if cfg.weights == '3d':
-                gg, fg, prop = batch
-                g, lg = gg[0].to(self.device), gg[1].to(self.device)
-                input_g = (g, lg)
-
-            else:
-                fg, prop = batch
-                fg = fg.to(self.device)
-                input_g = fg
-            prop = prop.to(self.device)
             with torch.no_grad():
-                # base
-                # out = self.model(input_g)
-
-                # vqvae
-                # zs = self.enc(input_g)
-                # q, vq_loss = self.vq.eval_forward(zs)
-                # q = self.pooling(input_g,q)
-                # out = self.head(q)
-
-                # hybrid
-                zs = self.backbone(input_g)
-                z = self.pooling(input_g, zs)
+                if self.args.weight == '3d':
+                    gg, fg, prop = batch
+                    g, lg = gg[0].to(self.device), gg[1].to(self.device)
+                    zs = self.backbone((g, lg))
+                    z = self.pooling(g, zs)
+                else:
+                    fg, prop = batch
+                    fg = fg.to(self.device)
+                    zs = self.backbone(fg)
+                    z = self.pooling(fg, zs)
+                prop = prop.to(self.device)
                 out = self.head(z)
 
                 mae = self.mae_loss(out, prop)

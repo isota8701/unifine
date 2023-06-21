@@ -103,17 +103,17 @@ def formula_to_dense_graph(string):
 
 class LoadDataset(torch.utils.data.Dataset):
     def __init__(self,
+                 args,
                  dataset = cfg.dataset,
                  path = cfg.data_dir,
-                 cut_data = cfg.cut_data,
                  cutoff= cfg.cutoff,
                  max_neighbors=cfg.max_neighbors,
-                 target= cfg.prop,
-                 num_workers=cfg.workers):
+                 num_workers=cfg.workers,
+                 ):
         super().__init__()
         print('Load dataset')
         self.path = path
-
+        self.formula_graph = args.fg
         self.graphs = []
         self.line_graphs = []
         self.formula = []
@@ -153,14 +153,19 @@ class LoadDataset(torch.utils.data.Dataset):
         datasplit = np.array_split(df['full_formula'], num_workers)
 
         def progress_f_to_g(df):
-            return [formula_to_spread_graph(d) for d in tqdm(df)]
+            if self.formula_graph == 'mask':
+                return [formula_to_spread_graph(d) for d in tqdm(df)]
+            elif self.formula_graph == "dense":
+                return [formula_to_dense_graph(d) for d in tqdm(df)]
+            else:
+                assert False, "Unspecified formula graph style"
 
         graphs = Parallel(n_jobs=num_workers)(delayed(progress_f_to_g)(split) for split in datasplit)
         for gs in graphs:
             self.formula += gs
 
         print('Prepare labels')
-        self.labels = df[target].to_numpy()
+        self.labels = df[args.target].to_numpy()
 
     def __len__(self):
         return len(self.graphs)
@@ -196,10 +201,10 @@ def get_scaler(data_list):
     return lattice_scaler
 
 
-def MaterialsDataloader(dataset : str = cfg.dataset):
+def MaterialsDataloader(args, dataset : str = cfg.dataset):
 
     print('Prepare train/validation/test data')
-    data = LoadDataset(dataset= dataset)
+    data = LoadDataset(args, dataset= dataset)
     collate_fn = data.collate
     data_list = [d for d in data]
     train_set = data_list[:data.num_train]
@@ -222,17 +227,19 @@ def MaterialsDataloader(dataset : str = cfg.dataset):
 
 class LoadEvalset(torch.utils.data.Dataset):
     def __init__(self,
+                 args,
                  dataset = cfg.evalset,
                  path = cfg.data_dir,
-                 target = cfg.prop,
-                 num_workers =cfg.workers
+                 num_workers =cfg.workers,
                  ):
+        self.args = args
         print(f"Loading eval dataset : {dataset}")
         df = pd.read_pickle(path + dataset +".pkl")
         # target
-        df = df.dropna(subset = [target]).reset_index(drop = True)
+        df = df.dropna(subset = [args.target]).reset_index(drop = True)
         # df = df[df[target] > 0].reset_index(drop = True)
-        self.prop = target
+        self.formula_graph = args.fg
+        self.prop = args.target
         self.formula = []
         self.labels= []
 
@@ -245,14 +252,19 @@ class LoadEvalset(torch.utils.data.Dataset):
         datasplit = np.array_split(df['full_formula'], num_workers)
 
         def progress_f_to_g(df):
-            return [formula_to_spread_graph(d) for d in tqdm(df)]
+            if self.formula_graph == 'mask':
+                return [formula_to_spread_graph(d) for d in tqdm(df)]
+            elif self.formula_graph == "dense":
+                return [formula_to_dense_graph(d) for d in tqdm(df)]
+            else:
+                assert False, "Unspecified formula graph style"
         graphs = Parallel(n_jobs=num_workers)(delayed(progress_f_to_g)(split) for split in datasplit)
         for gs in graphs:
             self.formula += gs
         print('Prepare labels')
-        self.labels = df[target].to_numpy()
+        self.labels = df[args.target].to_numpy()
 
-        if cfg.weights == '3d':
+        if args.weight == '3d':
             self.graphs = []
             self.line_graphs = []
             print('Prepare graph and line graph from json dict')
@@ -277,7 +289,7 @@ class LoadEvalset(torch.utils.data.Dataset):
         return len(self.labels)
 
     def __getitem__(self, index):
-        if cfg.weights == '3d':
+        if self.args.weight == '3d':
             g = self.graphs[index]
             lg = self.line_graphs[index]
             fg = self.formula[index]
@@ -289,19 +301,23 @@ class LoadEvalset(torch.utils.data.Dataset):
 
     @staticmethod
     def collate(samples):
-        if cfg.weights == '3d':
-            g, lg, fg, labels = map(list, zip(*samples))
-            g = dgl.batch(g)
-            lg = dgl.batch(lg)
-            fg = dgl.batch(fg)
-            return (g, lg), fg, torch.tensor(labels, dtype=torch.float32).view(-1, 1)
         fg, labels = map(list, zip(*samples))
         fg = dgl.batch(fg)
         return fg, torch.tensor(labels, dtype=torch.float32).view(-1,1)
+    @staticmethod
+    def collate_3d(samples):
+        g, lg, fg, labels = map(list, zip(*samples))
+        g = dgl.batch(g)
+        lg = dgl.batch(lg)
+        fg = dgl.batch(fg)
+        return (g, lg), fg, torch.tensor(labels, dtype=torch.float32).view(-1, 1)
 
-def EvalLoader(dataset = cfg.evalset):
-    data = LoadEvalset(dataset = dataset)
-    collate_fn = data.collate
+def EvalLoader(args, dataset = cfg.evalset):
+    data = LoadEvalset(args, dataset=dataset)
+    if args.weight == '3d':
+        collate_fn = data.collate_3d
+    else:
+        collate_fn = data.collate
     data_list = [d for d in data]
     train_set = data_list[:data.num_train]
     valid_set = data_list[data.num_train:data.num_train+data.num_valid]

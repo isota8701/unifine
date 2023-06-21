@@ -32,6 +32,7 @@ class crysDnoise(nn.Module):
         self.var_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim)
         self.ce = nn.CrossEntropyLoss()
         self.cos = nn.CosineSimilarity(dim = 1)
+        self.pooling = AvgPooling()
 
     def reparameterize(self, mu, logvar):
         """
@@ -45,33 +46,42 @@ class crysDnoise(nn.Module):
         eps = torch.randn_like(std)
         return eps * std + mu
 
+    def replace_feature(self, x, y, replace_prob):
+        mask = torch.empty((x.size(0),), dtype = torch.float32,
+                           device = x.device).uniform_(0,1) < replace_prob
+        xx = x.clone()
+        xx[mask,:] = y[mask,:]
+        return xx
     def forward(self, gg, fg, gprop, yprop):
-        z1 = self.source_encoder(fg)
-        zn, z2 = self.target_encoder(gg)
-        mu, logvar = self.mu_fc(z2), self.var_fc(z2)
-        z2 = self.reparameterize(mu, logvar)
+        zs = self.source_encoder(fg)
+        zt = self.target_encoder(gg)
+        mu, logvar = self.mu_fc(zt), self.var_fc(zt)
+        zt = self.reparameterize(mu, logvar)
+        z2 = self.pooling(gg[0], zt)
 
         pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
         latt_loss = self.lattice_loss(pred_latt, gprop)
         latt_loss*=10
 
-        pred_comp_per_atom = self.predict_atom(zn, gprop.num_atoms)
+        pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
         atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
 
         # crys_noise_cycle
-        loss_p = F.mse_loss(self.proj(z1), z2)
-        loss_i = F.mse_loss(z1, self.invp(z2))
-        loss_c = F.mse_loss(self.invp(self.proj(z1)), z1)
-        cycle_loss = loss_p + loss_i + loss_c
+        # loss_p = F.mse_loss(self.proj(z1), z2)
+        # loss_i = F.mse_loss(z1, self.invp(z2))
+        # loss_c = F.mse_loss(self.invp(self.proj(z1)), z1)
+        # cycle_loss = loss_p + loss_i + loss_c
+        zh = self.replace_feature(zs, zt, 0.3)
+        hybrid_loss = F.mse_loss(zh, zt)
 
         kld_loss = self.kld_loss(mu, logvar)
 
         # crys_noise_cos
         # cos_loss = -(self.cos(self.proj(z1), z2.detach()).mean())
 
-        loss =  cycle_loss + atom_loss + latt_loss + kld_loss
+        loss =  hybrid_loss + atom_loss + latt_loss + kld_loss
         loss_dict = {
-            'cycle_loss': cycle_loss,
+            'hybrid_loss': hybrid_loss,
             'atom_loss': atom_loss,
             'latt_loss': latt_loss,
             'kld_loss': kld_loss,
@@ -126,9 +136,11 @@ class crysDnoise(nn.Module):
         return kld_loss
 
 class crysHyrbid(nn.Module):
-    def __init__(self):
+    def __init__(self, flag : str = 'hybrid',
+                 formula_graph:str = "mask"):
         super().__init__()
-        self.source_encoder = source_encoder()
+        self.flag = flag
+        self.source_encoder = source_encoder(formula_graph= formula_graph)
         self.target_encoder = target_encoder()
         self.lattice_fc = nn.Linear(cfg.GNN.hidden_dim, 6)
         self.lattice_scaler = torch.load(cfg.data_dir + cfg.dataset + "_LATTICE-SCALER.pt")
@@ -179,40 +191,55 @@ class crysHyrbid(nn.Module):
     def forward(self, gg, fg, gprop, yprop):
         zs = self.source_encoder(fg)
         zt = self.target_encoder(gg)
-        # mu, logvar = self.mu_fc(zt), self.var_fc(zt)
-        # zt = self.reparameterize(mu, logvar)
-        z2 = self.pooling(gg[0], zt)
-        # mu, logvar = self.mu_fc(z2), self.var_fc(z2)
-        # z2 = self.reparameterize(mu, logvar)
-
-        pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
-        latt_loss = self.lattice_loss(pred_latt, gprop)
-
-        pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
-        atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
-
-        zh = self.replace_feature(zs, zt, 0.3)
-        hybrid_loss = F.mse_loss(zh, zt)
-
-        # loss_p = F.mse_loss(self.proj(zs), zt.detach())
-        # loss_i = F.mse_loss(zs, self.invp(zt.detach()))
-        # loss_c = F.mse_loss(self.invp(self.proj(zs)), zs)
-        # cycle_loss = loss_p + loss_i + loss_c
-
         z1 = self.pooling(fg, zs)
-        # hybrid loss
-        similarity = self.cos(z1, z2).mean()
-        # kld_loss = self.kld_loss(mu, logvar)
+        z2 = self.pooling(gg[0], zt)
 
-        loss = atom_loss + latt_loss + hybrid_loss #+ kld_loss
-        loss_dict = {
-            'similarity': similarity,
-            'atom_loss': atom_loss,
-            'latt_loss': latt_loss,
-            'hybrid_loss': hybrid_loss,
-            # 'kld_loss':kld_loss,
-            # 'cl_loss': cl_loss
-        }
+        if self.flag == 'hybrid':
+            pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
+            latt_loss = self.lattice_loss(pred_latt, gprop)
+
+            pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
+            atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
+
+            zh = self.replace_feature(zs, zt, 0.3)
+            hybrid_loss = F.mse_loss(zh, zt)
+
+            similarity = self.cos(z1, z2).mean()
+
+            loss = hybrid_loss + atom_loss + latt_loss
+            loss_dict = {
+                'similarity': similarity,
+                'atom_loss': atom_loss,
+                'latt_loss': latt_loss,
+                'hybrid_loss': hybrid_loss,
+            }
+
+        elif self.flag == 'vae':
+            mu, logvar = self.mu_fc(z2), self.var_fc(z2)
+            z2 = self.reparameterize(mu, logvar)
+
+            loss_p = F.mse_loss(self.proj(z1), z2.detach())
+            loss_i = F.mse_loss(z1, self.invp(z2.detach()))
+            loss_c = F.mse_loss(self.invp(self.proj(z1)), z1)
+            cycle_loss = loss_p + loss_i + loss_c
+
+            pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
+            latt_loss = self.lattice_loss(pred_latt, gprop)
+
+            pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
+            atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
+
+            kl_loss = self.kld_loss(mu, logvar)
+            loss = cycle_loss  + atom_loss + latt_loss + kl_loss
+            loss_dict = {
+                'kld_loss': kl_loss,
+                'atom_loss': atom_loss,
+                'latt_loss': latt_loss,
+                'cycle_loss': cycle_loss,
+            }
+        else:
+            assert False, "unspecified pretrain task type (not in [hybrid, vae])"
+
         return loss, loss_dict
 
     def predice_lattice(self, z, num_atoms):
@@ -418,6 +445,169 @@ class crysVQVAE(nn.Module):
         loss = F.cross_entropy(pred_comp_per_atom, target_atomic_num, reduction='none')
         return scatter(loss, gdata.batch, reduce='mean').mean()
 
+    def kld_loss(self, mu, log_var):
+        kld_loss = torch.mean(
+            -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
+        return kld_loss
+
+class crysDistill(nn.Module):
+    def __init__(self, flag : str = "student",
+                 hidden_dim: int = cfg.GNN.hidden_dim,
+                 out_dim: int = cfg.GNN.output_dim,
+                 formula_graph: str = "mask"):
+        super().__init__()
+        self.flag = flag
+        self.source_encoder = source_encoder(formula_graph = formula_graph)
+        self.target_encoder = target_encoder()
+        self.lattice_fc = nn.Linear(hidden_dim, 6)
+        self.lattice_scaler = torch.load(cfg.data_dir + cfg.dataset + "_LATTICE-SCALER.pt")
+        self.atom_fc = nn.Linear(hidden_dim, cfg.max_atomic_num)
+        self.yprop_fc = nn.Linear(hidden_dim, out_dim)
+        self.mu_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim)
+        self.var_fc = nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim)
+        self.proj = nn.Sequential(nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim),
+                                  nn.BatchNorm1d(cfg.GNN.hidden_dim),
+                                  nn.ReLU(),
+                                  nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim))
+        self.invp = nn.Sequential(nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim),
+                                  nn.BatchNorm1d(cfg.GNN.hidden_dim),
+                                  nn.ReLU(),
+                                  nn.Linear(cfg.GNN.hidden_dim, cfg.GNN.hidden_dim))
+        self.ce = nn.CrossEntropyLoss()
+        self.cos = nn.CosineSimilarity(dim = 1)
+        self.pooling = AvgPooling()
+
+    def replace_feature(self, x, y, replace_prob):
+        mask = torch.empty((x.size(0),), dtype = torch.float32,
+                           device = x.device).uniform_(0,1) < replace_prob
+        xx = x.clone()
+        xx[mask,:] = y[mask,:]
+        return xx
+
+    def reparameterize(self, mu, logvar):
+        """
+        Reparameterization trick to sample from N(mu, var) from
+        N(0,1).
+        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+        :return: (Tensor) [B x D]
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
+
+    def forward(self, gg, fg, gprop, yprop):
+        zs = self.source_encoder(fg)
+        zt = self.target_encoder(gg)
+        z1 = self.pooling(fg, zs)
+        z2 = self.pooling(gg[0], zt)
+
+        pred_y = self.yprop_fc(z1)
+        y_loss = F.mse_loss(pred_y, yprop)
+
+        # hybrid loss
+        similarity = self.cos(z1, z2).mean()
+        if self.flag == 'hybrid':
+            pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
+            latt_loss = self.lattice_loss(pred_latt, gprop)
+
+            pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
+            atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
+
+            pred_y_t = self.yprop_fc(z2)
+            y2_loss = F.mse_loss(pred_y_t, yprop)
+            zh = self.replace_feature(zs, zt, 0.3)
+            hybrid_loss = F.mse_loss(zh, zt)
+
+            loss =  hybrid_loss + y_loss + y2_loss + atom_loss + latt_loss
+            loss_dict = {
+                'similarity': similarity,
+                'atom_loss': atom_loss,
+                'latt_loss': latt_loss,
+                'hybrid_loss': hybrid_loss,
+                'y_loss': y_loss,
+                'y_loss_teacher': y2_loss
+            }
+
+        elif self.flag == 'vae':
+            mu, logvar = self.mu_fc(zt), self.var_fc(zt)
+            zt = self.reparameterize(mu, logvar)
+            z2 = self.pooling(gg[0], zt)
+            pred_y_t = self.yprop_fc(z2)
+            y2_loss = F.mse_loss(pred_y_t, yprop)
+
+            loss_p = F.mse_loss(self.proj(zs), zt.detach())
+            loss_i = F.mse_loss(zs, self.invp(zt.detach()))
+            loss_c = F.mse_loss(self.invp(self.proj(zs)), zs)
+            cycle_loss = loss_p + loss_i + loss_c
+            # pred_latt, pred_lengths, pred_angles = self.predice_lattice(z2, gprop.num_atoms)
+            # latt_loss = self.lattice_loss(pred_latt, gprop)
+            #
+            # pred_comp_per_atom = self.predict_atom(zt, gprop.num_atoms)
+            # atom_loss = self.atom_loss(pred_comp_per_atom, gprop)
+            z1 = self.pooling(fg, self.proj(zs))
+            pred_y = self.yprop_fc(z1)
+            y_loss = F.mse_loss(pred_y, yprop)
+
+            kl_loss = self.kld_loss(mu, logvar)
+
+            loss = y_loss + y2_loss + cycle_loss + kl_loss
+            loss_dict = {
+                'kld_loss': kl_loss,
+                'cycle_loss': cycle_loss,
+                'y_loss': y_loss,
+                'y_loss_teacher': y2_loss
+            }
+
+        elif self.flag == 'student':
+            loss = y_loss
+            loss_dict = {
+                'y_loss': y_loss
+            }
+        elif self.flag == 'teacher':
+            pred_y = self.yprop_fc(z2)
+            y_loss = F.mse_loss(pred_y, yprop)
+            loss = y_loss
+            loss_dict = {
+                'y_loss':y_loss
+            }
+        else:
+            assert False, "Unspecified Evaluation Type"
+
+        return loss, loss_dict, pred_y
+
+    def predice_lattice(self, z, num_atoms):
+        self.lattice_scaler.match_device(z)
+        pred_length_and_angles = self.lattice_fc(z)
+        scaled_preds = self.lattice_scaler.inverse_transform(pred_length_and_angles)
+        pred_lengths = scaled_preds[:, :3]
+        pred_angles = scaled_preds[:,3:]
+        pred_lengths = pred_lengths*num_atoms.view(-1,1).float()**(1/3)
+        # w/o lattice scaling
+        # self.lattice_scaler.match_device(z)
+        # pred_length_and_angles = self.lattice_fc(z)
+        # pred_lengths = pred_length_and_angles[:, :3]
+        # pred_angles = pred_length_and_angles[:, 3:]
+        # pred_lengths = pred_lengths * num_atoms.view(-1, 1).float() ** (1 / 3)
+
+        return pred_length_and_angles, pred_lengths, pred_angles
+
+    def lattice_loss(self, pred_lengths_and_angles, gdata):
+        self.lattice_scaler.match_device(pred_lengths_and_angles)
+        target_lengths_and_angles = self.lattice_scaler.transform(gdata.lscaled_lattice)
+        # w/o lattice scaling
+        # target_lengths_and_angles = gdata.lscaled_lattice
+        return F.mse_loss(pred_lengths_and_angles, target_lengths_and_angles)
+
+    def predict_atom(self, z, num_atoms):
+        # z_per_atom = z.repeat_interleave(num_atoms, dim = 0)
+        pred_comp_per_atom = self.atom_fc(z)
+        return pred_comp_per_atom
+
+    def atom_loss(self, pred_comp_per_atom, gdata):
+        target_atomic_num = gdata.atomic_nums -1
+        loss = F.cross_entropy(pred_comp_per_atom, target_atomic_num, reduction='none')
+        return scatter(loss, gdata.batch, reduce='mean').mean()
     def kld_loss(self, mu, log_var):
         kld_loss = torch.mean(
             -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)

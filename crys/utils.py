@@ -119,17 +119,18 @@ def curate_jdata(dataset_name, max_atoms, cut_data):
         assert len(df) > num, "less than cut length"
         df = df.iloc[:num]
     print(f"Refined dataset shape {df.shape}")
-    # mp
+    # pretrain
     df_joint_test = df.iloc[:10000, :].reset_index(drop = True)
     df_joint_ptrain = df.iloc[10000:,:].reset_index(drop=True)
-    new_name= f"materials-project_max_atoms_{max_atoms}_dsjoint_len_{len(df_joint_test)}"
+    new_name= f"materials-project_eval-set_max_{max_atoms}_{len(df_joint_test)}"
     df_joint_test.to_pickle(cfg.data_dir + f"{new_name}.pkl")
-    new_name= f"materials-project_max_atoms_{max_atoms}_dsjoint_len_{len(df_joint_ptrain)}"
+    new_name= f"materials-project_ptrain-set_max_{max_atoms}_{len(df_joint_ptrain)}"
     df_joint_ptrain.to_pickle(cfg.data_dir + f"{new_name}.pkl")
 
-    #dft
-    # new_name+= f"_max_atoms_{max_atoms}_len_{len(df)}"
+    # distill
+    # new_name+= f"_max_{max_atoms}_{len(df)}"
     # df.to_pickle(cfg.data_dir + f"{new_name}.pkl")
+
     return df
 
 def curate_eval():
@@ -218,6 +219,5 @@ if __name__ == "__main__":
     cfg.dataset = 'mp_3d_2020'
     curate_jdata(cfg.dataset, cfg.max_atoms, cfg.cut_data)
     # curate_eval()
-    # check_history('checkpoints/history_evaluate_TEST_0601_finetune_formation_10000.pickle')
-    # check_history('checkpoints/history_evaluate_crysVAE_nem_pretrain_0509_materials-project_77153_0511_finetune_formation_10000.pickle')
-    # plot_history('checkpoints/history_evaluate_crysVAE_nem_pretrain_0509_materials-project_77153_0511_finetune_formation_10000.pickle')
+    # check_history('checkpoints/history_crys_distill_kd_hybrid_test_0619.pickle')
+    # plot_history('checkpoints/history_crys_distill_kd_hybrid_test_0619.pickle')

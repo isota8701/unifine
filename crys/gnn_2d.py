@@ -52,12 +52,14 @@ class Encoder(nn.Module):
                  atom_input_dim: int = cfg.GNN.atom_input_dim,
                  hidden_dim: int= cfg.GNN.hidden_dim,
                  roost_layers: int = cfg.GNN.roost_layers,
-                 replace_dim: int = 64
+                 replace_dim: int = 64,
+                 formula_graph : str = "mask"
                  ):
         """Initialize class with number of input features, conv layers."""
         super().__init__()
         self.hidden_dim = hidden_dim
         self.replace_dim = replace_dim
+        self.formula_graph = formula_graph
         self.atom_embedding = MLPLayer(atom_input_dim, hidden_dim)
         self.noise_fc = nn.Linear(hidden_dim, hidden_dim)
         self.replace_noise_fc = nn.Linear(hidden_dim, replace_dim)
@@ -95,7 +97,8 @@ class Encoder(nn.Module):
         # x = torch.cat([x_ori, x_rep], dim = 1)
 
         # mask feature
-        x = self.drop_feature(x, drop_prob= 0.1)
+        if self.formula_graph == "mask":
+            x = self.drop_feature(x, drop_prob= 0.1)
         #################################################
         # gated GCN updates: update node, edge features
         for module in self.module_layers:
